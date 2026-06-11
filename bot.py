@@ -51,7 +51,9 @@ SEARCH_QUERIES = [
     "Israel psychedelic research news",
     "psychedelic medicine FDA DEA news",
     "наркополитика новости",
-    "funny weird drug arrest news 2025",
+    "drug arrest scandal news 2025",
+    "drugs court case verdict news 2025",
+    "celebrity drugs scandal news 2025",
 ]
 
 
@@ -112,14 +114,14 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
 
 ОБЯЗАТЕЛЬНО напиши 4-6 заметок на русском языке — из найденного через поиск или из RSS. Заметки должны быть в любом случае — выбери самое интересное из того что есть.
 
-Формат каждой заметки (строго, без отступлений):
-ЗАГОЛОВОК: [короткий, конкретный, двухчастный через точку]
-ТЕКСТ: [2-4 предложения, только факты, живой язык без шаблонов]
-ИСТОЧНИК: [название издания]
-ССЫЛКА: [полный URL]
----
+Темы: психоделические исследования, наркополитика, реформы законодательства, громкие случаи и скандалы связанные с наркотиками которые попали в новости — аресты, суды, скандалы с известными людьми, резонансные истории.
 
-Темы: психоделические исследования, наркополитика, реформы законодательства, курьёзные случаи связанные с наркотиками."""
+Формат каждой заметки СТРОГО вот такой, без отступлений, без нумерации:
+ЗАГОЛОВОК: [текст заголовка]
+ТЕКСТ: [текст заметки]
+ИСТОЧНИК: [название издания]
+ССЫЛКА: [URL]
+---"""
 
     async with httpx.AsyncClient(timeout=180) as client:
         response = await client.post(
@@ -144,6 +146,8 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
         if block.get("type") == "text":
             full_text += block["text"]
 
+    logger.info(f"Claude raw response (first 1000 chars): {full_text[:1000]}")
+
     posts = []
     for chunk in full_text.split("---"):
         chunk = chunk.strip()
@@ -162,6 +166,7 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
         if post.get("title") and post.get("text"):
             posts.append(post)
 
+    logger.info(f"Parsed posts: {len(posts)}")
     return posts
 
 
