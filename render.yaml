@@ -1,33 +1,14 @@
 services:
-  # Основной бот — всегда работает, принимает нажатия кнопок
-  - type: web
-    name: nezavisimiy-portal-bot
+  - type: cron
+    name: nezavisimiy-portal-digest
     env: python
+    schedule: "0 9 * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_CHAT_ID
-        sync: false
-      - key: CHANNEL_ID
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
-
-  # Cron — запускает дайджест каждый день в 9:00 UTC (12:00 Бразилия)
-  - type: cron
-    name: nezavisimiy-portal-digest
-    env: python
-    schedule: "0 9 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py digest
-    envVars:
-      - key: BOT_TOKEN
-        sync: false
-      - key: ADMIN_CHAT_ID
-        sync: false
-      - key: CHANNEL_ID
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
