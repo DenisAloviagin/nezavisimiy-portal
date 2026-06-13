@@ -124,6 +124,17 @@ SEARCH_QUERIES = [
     "Africa drug policy news",
     "Australia drug reform news",
     "India drug law news",
+    # Новые виды грибов и вещества
+    "new psilocybin mushroom species discovered",
+    "new psychedelic compound discovered research",
+    "novel psychoactive substance ethnobotany",
+    "new fungi species hallucinogenic",
+    "tryptamine alkaloid new research",
+    "ethnomycology new species research",
+    "underground psychedelic research independent",
+    "citizen science psychedelic research",
+    "new plant medicine research ethnobotany",
+    "novel serotonergic compound research",
     # Передозировки
     "drug overdose death news",
     "drug poisoning contamination news",
@@ -141,6 +152,7 @@ CATEGORY_ICONS = {
     "нейронаука": "🧠",
     "фармакология": "⚗️",
     "зависимость": "🔗",
+    "этноботаника": "🍄",
 }
 
 
@@ -211,7 +223,8 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
 - Лечение зависимости
 - Фармацевтика
 - Новые научные исследования из журналов (Journal of Psychedelic Studies, Neuropsychopharmacology, JAMA Psychiatry и др.)
-- Резонансные истории
+- Новые виды псилоцибиновых грибов и этноботанические открытия
+- Новые вещества и их потенциал — малоизученные соединения, независимые исследования
 
 Сделай веб-поиск по этим темам — ТОЛЬКО за последние 48 часов (после {date_from}):
 {search_queries_text}
@@ -225,7 +238,7 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
 ЗАГОЛОВОК: [короткий, конкретный, двухчастный через точку]
 ТЕКСТ: [2-4 предложения, только факты, живой язык]
 ДАТА: [дата публикации ДД.ММ.ГГГГ]
-КАТЕГОРИЯ: [исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость]
+КАТЕГОРИЯ: [исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость / этноботаника]
 ВАЖНОСТЬ: [1-5]
 РЕГИОН: [США / Европа / Латинская Америка / Азия / Россия / Ближний Восток / Африка / Глобально]
 ИСТОЧНИК: [название]
@@ -284,10 +297,26 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
         if post.get("title") and post.get("text"):
             posts.append(post)
 
-    posts.sort(key=lambda x: int(x.get("importance", "3") or "3"), reverse=True)
+    # Фильтруем по дате программно — отсекаем всё старше 30 дней
+    cutoff_30 = datetime.now(timezone.utc) - timedelta(days=30)
+    filtered = []
+    for post in posts:
+        date_str = post.get("date", "")
+        if date_str:
+            try:
+                # Парсим дату в формате ДД.ММ.ГГГГ
+                post_date = datetime.strptime(date_str, "%d.%m.%Y").replace(tzinfo=timezone.utc)
+                if post_date < cutoff_30:
+                    logger.info(f"Filtered old post: {date_str} — {post.get('title', '')[:50]}")
+                    continue
+            except ValueError:
+                pass  # Если дата не парсится — оставляем
+        filtered.append(post)
 
-    logger.info(f"Parsed posts: {len(posts)}")
-    return posts
+    filtered.sort(key=lambda x: int(x.get("importance", "3") or "3"), reverse=True)
+
+    logger.info(f"Parsed posts: {len(posts)}, after date filter: {len(filtered)}")
+    return filtered
 
 
 async def run_digest():
