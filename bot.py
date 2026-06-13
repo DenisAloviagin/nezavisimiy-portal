@@ -54,10 +54,10 @@ for q in PUBMED_QUERIES:
 
 # Научные журналы RSS напрямую
 JOURNAL_FEEDS = [
-    "https://www.tandfonline.com/feed/rss/rjps20",  # Journal of Psychedelic Studies
-    "https://www.nature.com/npp/rss.xml",           # Neuropsychopharmacology
+    "https://www.tandfonline.com/feed/rss/rjps20",
+    "https://www.nature.com/npp/rss.xml",
     "https://www.sciencedirect.com/journal/drug-and-alcohol-dependence/rss",
-    "https://jamanetwork.com/rss/site_3/67.xml",    # JAMA Psychiatry
+    "https://jamanetwork.com/rss/site_3/67.xml",
 ]
 RSS_FEEDS.extend(JOURNAL_FEEDS)
 
@@ -69,7 +69,6 @@ def get_date_range() -> tuple[str, str]:
 
 
 SEARCH_QUERIES = [
-    # Психоделики
     "psilocybin research news",
     "MDMA therapy FDA news",
     "ayahuasca ibogaine news",
@@ -77,46 +76,37 @@ SEARCH_QUERIES = [
     "psychedelic medicine clinical trial news",
     "LSD microdosing research news",
     "DMT research news",
-    # Каннабис
     "cannabis legalization news",
     "THC edibles products news",
     "marijuana law reform news",
     "cannabis business news",
-    # Наркополитика и реформы
     "drug policy reform decriminalization news",
     "harm reduction naloxone news",
     "drug safe consumption site news",
     "drug war policy news",
-    # Кокаин фентанил опиоиды
     "cocaine bust arrest seizure news",
     "fentanyl overdose crisis news",
     "opioid epidemic news",
     "heroin drug trafficking news",
-    # Синтетика
     "methamphetamine bust news",
     "designer drugs psychoactive news",
     "synthetic drugs seized news",
-    # Картели и трафик
     "drug cartel Latin America news",
     "drug trafficking arrest news",
     "narco Mexico Colombia news",
-    # Резонанс
     "celebrity drug arrest news",
     "politician drugs scandal news",
     "drug court case verdict news",
-    # Нейронаука и фармакология
     "neuroscience psychopharmacology research news",
     "brain consciousness substances research news",
     "addiction treatment breakthrough news",
     "substance use disorder treatment news",
     "pharma company drug scandal news",
-    # Научные журналы — специально
     "psychedelic study published journal news",
     "psilocybin clinical trial results published",
     "MDMA PTSD study results published",
     "cannabis research published journal",
     "drug addiction study published",
-    # Регионы
     "наркополитика новости",
     "drug policy Asia Thailand China news",
     "drug policy Europe news",
@@ -124,7 +114,6 @@ SEARCH_QUERIES = [
     "Africa drug policy news",
     "Australia drug reform news",
     "India drug law news",
-    # Новые виды грибов и вещества
     "new psilocybin mushroom species discovered",
     "new psychedelic compound discovered research",
     "novel psychoactive substance ethnobotany",
@@ -135,7 +124,6 @@ SEARCH_QUERIES = [
     "citizen science psychedelic research",
     "new plant medicine research ethnobotany",
     "novel serotonergic compound research",
-    # Передозировки
     "drug overdose death news",
     "drug poisoning contamination news",
 ]
@@ -255,7 +243,7 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
                 "content-type": "application/json",
             },
             json={
-                "model": "claude-opus-4-5",
+                "model": "claude-sonnet-4-6",
                 "max_tokens": 8000,
                 "tools": [{"type": "web_search_20250305", "name": "web_search"}],
                 "messages": [{"role": "user", "content": prompt}],
@@ -304,13 +292,12 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
         date_str = post.get("date", "")
         if date_str:
             try:
-                # Парсим дату в формате ДД.ММ.ГГГГ
                 post_date = datetime.strptime(date_str, "%d.%m.%Y").replace(tzinfo=timezone.utc)
                 if post_date < cutoff_30:
                     logger.info(f"Filtered old post: {date_str} — {post.get('title', '')[:50]}")
                     continue
             except ValueError:
-                pass  # Если дата не парсится — оставляем
+                pass
         filtered.append(post)
 
     filtered.sort(key=lambda x: int(x.get("importance", "3") or "3"), reverse=True)
