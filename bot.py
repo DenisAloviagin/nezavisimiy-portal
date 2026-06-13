@@ -3,7 +3,7 @@ import json
 import asyncio
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import feedparser
@@ -19,6 +19,7 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 SEEN_FILE = Path("seen_ids.json")
 
 RSS_FEEDS = [
+    # Психоделические медиа
     "https://psychedelicalpha.com/feed",
     "https://lucid.news/feed/",
     "https://thethirdwave.co/feed/",
@@ -26,15 +27,18 @@ RSS_FEEDS = [
     "https://chacruna.net/feed/",
     "https://maps.org/feed/",
     "https://www.iceers.org/feed/",
+    # Наркополитика
     "https://drugpolicy.org/feed/",
     "https://transformdrugs.org/feed/",
     "https://filtermag.org/feed/",
     "https://www.wola.org/feed/",
     "https://insightcrime.org/feed/",
     "https://www.release.org.uk/feed",
+    # Региональные
     "https://meduza.io/rss/all",
     "https://www.bangkokpost.com/rss/data/topstories.xml",
     "https://www.irrawaddy.com/feed",
+    # Vice
     "https://www.vice.com/en/rss",
 ]
 
@@ -46,59 +50,83 @@ PUBMED_QUERIES = [
     "psychedelic+neuroscience", "drug+dependence"
 ]
 for q in PUBMED_QUERIES:
-    RSS_FEEDS.append(f"https://pubmed.ncbi.nlm.nih.gov/rss/search/?term={q}&limit=5&format=rss")
+    RSS_FEEDS.append(f"https://pubmed.ncbi.nlm.nih.gov/rss/search/?term={q}&limit=10&format=rss")
+
+# Научные журналы RSS напрямую
+JOURNAL_FEEDS = [
+    "https://www.tandfonline.com/feed/rss/rjps20",  # Journal of Psychedelic Studies
+    "https://www.nature.com/npp/rss.xml",           # Neuropsychopharmacology
+    "https://www.sciencedirect.com/journal/drug-and-alcohol-dependence/rss",
+    "https://jamanetwork.com/rss/site_3/67.xml",    # JAMA Psychiatry
+]
+RSS_FEEDS.extend(JOURNAL_FEEDS)
+
+
+def get_date_range() -> tuple[str, str]:
+    now = datetime.now(timezone.utc)
+    two_days_ago = now - timedelta(hours=48)
+    return two_days_ago.strftime("%B %d, %Y"), now.strftime("%B %d, %Y")
+
 
 SEARCH_QUERIES = [
-    "psilocybin research news 2025",
-    "MDMA therapy FDA news 2025",
-    "ayahuasca ibogaine news 2025",
-    "ketamine therapy news 2025",
-    "psychedelic medicine clinical trial 2025",
-    "LSD microdosing research 2025",
-    "DMT research news 2025",
-    "cannabis legalization news 2025",
-    "THC edibles products news 2025",
-    "marijuana dispensary cannabis business news 2025",
-    "cannabis law reform world 2025",
-    "CBD research news 2025",
-    "drug policy reform decriminalization 2025",
-    "drug legalization country news 2025",
-    "harm reduction naloxone drug news 2025",
-    "drug safe consumption room news 2025",
-    "drug war policy news 2025",
-    "cocaine bust arrest seizure news 2025",
-    "fentanyl overdose crisis news 2025",
-    "opioid epidemic news 2025",
-    "heroin drug trafficking news 2025",
-    "methamphetamine bust news 2025",
-    "designer drugs new psychoactive substances 2025",
-    "synthetic drugs seized news 2025",
-    "MDMA ecstasy seized news 2025",
-    "drug cartel news Latin America 2025",
-    "drug trafficking arrest news 2025",
-    "narco news Mexico Colombia 2025",
-    "drug smuggling bust news 2025",
-    "celebrity drug arrest scandal 2025",
-    "politician drugs scandal news 2025",
-    "drug court case verdict news 2025",
-    "neuroscience psychopharmacology research news 2025",
-    "brain consciousness drugs research 2025",
-    "addiction neuroscience treatment news 2025",
-    "antidepressant new research news 2025",
-    "substance use disorder treatment breakthrough 2025",
-    "pharmaceutical drug addiction treatment news 2025",
-    "opioid addiction medication news 2025",
-    "drug rehabilitation new method 2025",
-    "pharma company drug scandal 2025",
-    "наркополитика новости 2025",
-    "drug policy Asia Thailand China news 2025",
-    "drug policy Europe news 2025",
-    "Israel psychedelic research news 2025",
-    "Africa drug policy news 2025",
-    "India drug law news 2025",
-    "Australia drug reform news 2025",
-    "drug overdose death news 2025",
-    "drug poisoning contamination news 2025",
+    # Психоделики
+    "psilocybin research news",
+    "MDMA therapy FDA news",
+    "ayahuasca ibogaine news",
+    "ketamine therapy depression news",
+    "psychedelic medicine clinical trial news",
+    "LSD microdosing research news",
+    "DMT research news",
+    # Каннабис
+    "cannabis legalization news",
+    "THC edibles products news",
+    "marijuana law reform news",
+    "cannabis business news",
+    # Наркополитика и реформы
+    "drug policy reform decriminalization news",
+    "harm reduction naloxone news",
+    "drug safe consumption site news",
+    "drug war policy news",
+    # Кокаин фентанил опиоиды
+    "cocaine bust arrest seizure news",
+    "fentanyl overdose crisis news",
+    "opioid epidemic news",
+    "heroin drug trafficking news",
+    # Синтетика
+    "methamphetamine bust news",
+    "designer drugs psychoactive news",
+    "synthetic drugs seized news",
+    # Картели и трафик
+    "drug cartel Latin America news",
+    "drug trafficking arrest news",
+    "narco Mexico Colombia news",
+    # Резонанс
+    "celebrity drug arrest news",
+    "politician drugs scandal news",
+    "drug court case verdict news",
+    # Нейронаука и фармакология
+    "neuroscience psychopharmacology research news",
+    "brain consciousness substances research news",
+    "addiction treatment breakthrough news",
+    "substance use disorder treatment news",
+    "pharma company drug scandal news",
+    # Научные журналы — специально
+    "psychedelic study published journal news",
+    "psilocybin clinical trial results published",
+    "MDMA PTSD study results published",
+    "cannabis research published journal",
+    "drug addiction study published",
+    # Регионы
+    "наркополитика новости",
+    "drug policy Asia Thailand China news",
+    "drug policy Europe news",
+    "Israel psychedelic research news",
+    "Africa drug policy news",
+    "Australia drug reform news",
+    "India drug law news",
+    # Передозировки
+    "drug overdose death news",
+    "drug poisoning contamination news",
 ]
 
 CATEGORY_ICONS = {
@@ -132,7 +160,7 @@ def item_id(url: str) -> str:
 
 async def fetch_rss_items() -> list[dict]:
     items = []
-    cutoff = datetime.utcnow() - timedelta(hours=48)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
     seen = load_seen()
 
     for feed_url in RSS_FEEDS:
@@ -144,7 +172,7 @@ async def fetch_rss_items() -> list[dict]:
                     continue
                 published = entry.get("published_parsed")
                 if published:
-                    pub_dt = datetime(*published[:6])
+                    pub_dt = datetime(*published[:6], tzinfo=timezone.utc)
                     if pub_dt < cutoff:
                         continue
                 items.append({
@@ -166,37 +194,42 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
     )
     search_queries_text = "\n".join(f"- {q}" for q in SEARCH_QUERIES)
 
-    prompt = f"""Ты редактор Telegram-канала «Независимый Портал» — русскоязычного новостного портала обо всём что связано с веществами и их влиянием на человека и общество.
+    date_from, date_to = get_date_range()
 
-Тематика канала — всё что связано с веществами:
+    prompt = f"""Ты редактор Telegram-канала «Независимый Портал» — русскоязычного новостного портала обо всём что связано с веществами.
+
+ВАЖНО: Сегодня {date_to}. Ищи ТОЛЬКО новости и исследования опубликованные после {date_from}. Всё что старше — игнорируй полностью.
+
+Тематика канала:
 - Психоделики и психоделическая медицина (псилоцибин, MDMA, аяуаска, ибогаин, кетамин, ЛСД)
 - Каннабис — легализация, продукты, бизнес, законы
 - Наркополитика — реформы, декриминализация, законы по всему миру
 - Кокаин, фентанил, героин, метамфетамин — трафик, аресты, кризисы
-- Картели и наркотрафик — Латинская Америка, Азия, Европа
-- Снижение вреда — налоксон, безопасные комнаты, программы помощи
-- Нейронаука и психофармакология — как вещества влияют на мозг и сознание
-- Лечение зависимости — новые методы, прорывы, споры
-- Фармацевтика — новые препараты, скандалы фармкомпаний, опиоидный кризис
-- Резонансные истории — аресты знаменитостей, суды, скандалы
+- Картели и наркотрафик
+- Снижение вреда
+- Нейронаука и психофармакология
+- Лечение зависимости
+- Фармацевтика
+- Новые научные исследования из журналов (Journal of Psychedelic Studies, Neuropsychopharmacology, JAMA Psychiatry и др.)
+- Резонансные истории
 
-Сделай веб-поиск по всем этим темам — ищи новости строго за последние 48 часов:
+Сделай веб-поиск по этим темам — ТОЛЬКО за последние 48 часов (после {date_from}):
 {search_queries_text}
 
-Также вот материалы из RSS-лент за последние 48 часов:
+Также вот материалы из RSS-лент (уже отфильтрованы по дате):
 {rss_text}
 
-Твоя задача: найти ВСЕ интересные новости по теме за последние 48 часов. Не фильтруй агрессивно — лучше прислать 10-15 заметок чем пропустить что-то важное. Редактор сам выберет что публиковать.
+Найди ВСЕ интересные материалы строго за последние 48 часов. Для научных исследований допускается публикация за последний месяц если это важное исследование. Не фильтруй агрессивно — 10-15 заметок лучше чем пропустить важное.
 
-Формат каждой заметки СТРОГО вот такой, без отступлений, без нумерации:
+Формат каждой заметки СТРОГО:
 ЗАГОЛОВОК: [короткий, конкретный, двухчастный через точку]
 ТЕКСТ: [2-4 предложения, только факты, живой язык]
 ДАТА: [дата публикации ДД.ММ.ГГГГ]
-КАТЕГОРИЯ: [одно слово: исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость]
-ВАЖНОСТЬ: [цифра 1-5]
+КАТЕГОРИЯ: [исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость]
+ВАЖНОСТЬ: [1-5]
 РЕГИОН: [США / Европа / Латинская Америка / Азия / Россия / Ближний Восток / Африка / Глобально]
-ИСТОЧНИК: [название издания]
-ССЫЛКА: [полный URL]
+ИСТОЧНИК: [название]
+ССЫЛКА: [URL]
 ---"""
 
     async with httpx.AsyncClient(timeout=180) as client:
@@ -277,7 +310,7 @@ async def run_digest():
     await bot.send_message(
         chat_id=ADMIN_CHAT_ID,
         text=(
-            f"📋 <b>Дайджест {datetime.utcnow().strftime('%d.%m.%Y')}</b>\n"
+            f"📋 <b>Дайджест {datetime.now(timezone.utc).strftime('%d.%m.%Y')}</b>\n"
             f"Проверено RSS-источников: {len(RSS_FEEDS)}\n"
             f"Найдено из RSS: {len(rss_items)}\n"
             f"Подготовлено заметок: {len(posts)}\n\n"
