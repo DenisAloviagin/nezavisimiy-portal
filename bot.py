@@ -19,7 +19,6 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 SEEN_FILE = Path("seen_ids.json")
 
 RSS_FEEDS = [
-    # Психоделические медиа
     "https://psychedelicalpha.com/feed",
     "https://lucid.news/feed/",
     "https://thethirdwave.co/feed/",
@@ -27,18 +26,15 @@ RSS_FEEDS = [
     "https://chacruna.net/feed/",
     "https://maps.org/feed/",
     "https://www.iceers.org/feed/",
-    # Наркополитика
     "https://drugpolicy.org/feed/",
     "https://transformdrugs.org/feed/",
     "https://filtermag.org/feed/",
     "https://www.wola.org/feed/",
     "https://insightcrime.org/feed/",
     "https://www.release.org.uk/feed",
-    # Региональные
     "https://meduza.io/rss/all",
     "https://www.bangkokpost.com/rss/data/topstories.xml",
     "https://www.irrawaddy.com/feed",
-    # Vice
     "https://www.vice.com/en/rss",
 ]
 
@@ -52,7 +48,6 @@ PUBMED_QUERIES = [
 for q in PUBMED_QUERIES:
     RSS_FEEDS.append(f"https://pubmed.ncbi.nlm.nih.gov/rss/search/?term={q}&limit=10&format=rss")
 
-# Научные журналы RSS напрямую
 JOURNAL_FEEDS = [
     "https://www.tandfonline.com/feed/rss/rjps20",
     "https://www.nature.com/npp/rss.xml",
@@ -285,7 +280,6 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
         if post.get("title") and post.get("text"):
             posts.append(post)
 
-    # Фильтруем по дате программно — отсекаем всё старше 30 дней
     cutoff_30 = datetime.now(timezone.utc) - timedelta(days=30)
     filtered = []
     for post in posts:
@@ -358,12 +352,20 @@ async def run_digest():
         if post.get("url"):
             text += f" — <a href='{post['url']}'>читать</a>"
 
-        await bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=text,
-            parse_mode="HTML",
-            disable_web_page_preview=False,
-        )
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=text,
+                parse_mode="HTML",
+                disable_web_page_preview=False,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send post: {e}")
+            try:
+                plain = f"{post['title']}\n\n{post['text']}\n\n{post.get('url', '')}"
+                await bot.send_message(chat_id=ADMIN_CHAT_ID, text=plain)
+            except Exception as e2:
+                logger.error(f"Failed to send plain post: {e2}")
         if post.get("url"):
             seen.add(item_id(post["url"]))
         await asyncio.sleep(1)
