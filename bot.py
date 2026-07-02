@@ -74,18 +74,14 @@ SEARCH_QUERIES = [
     "cannabis legalization news",
     "THC edibles products news",
     "marijuana law reform news",
-    "cannabis business news",
     "drug policy reform decriminalization news",
     "harm reduction naloxone news",
-    "drug safe consumption site news",
-    "drug war policy news",
     "cocaine bust arrest seizure news",
     "fentanyl overdose crisis news",
     "opioid epidemic news",
     "heroin drug trafficking news",
     "methamphetamine bust news",
     "designer drugs psychoactive news",
-    "synthetic drugs seized news",
     "drug cartel Latin America news",
     "drug trafficking arrest news",
     "narco Mexico Colombia news",
@@ -93,32 +89,19 @@ SEARCH_QUERIES = [
     "politician drugs scandal news",
     "drug court case verdict news",
     "neuroscience psychopharmacology research news",
-    "brain consciousness substances research news",
     "addiction treatment breakthrough news",
-    "substance use disorder treatment news",
     "pharma company drug scandal news",
     "psychedelic study published journal news",
     "psilocybin clinical trial results published",
     "MDMA PTSD study results published",
-    "cannabis research published journal",
-    "drug addiction study published",
     "наркополитика новости",
     "drug policy Asia Thailand China news",
     "drug policy Europe news",
     "Israel psychedelic research news",
-    "Africa drug policy news",
     "Australia drug reform news",
-    "India drug law news",
     "new psilocybin mushroom species discovered",
     "new psychedelic compound discovered research",
     "novel psychoactive substance ethnobotany",
-    "new fungi species hallucinogenic",
-    "tryptamine alkaloid new research",
-    "ethnomycology new species research",
-    "underground psychedelic research independent",
-    "citizen science psychedelic research",
-    "new plant medicine research ethnobotany",
-    "novel serotonergic compound research",
     "drug overdose death news",
     "drug poisoning contamination news",
 ]
@@ -141,29 +124,36 @@ CATEGORY_ICONS = {
 
 def load_seen() -> set:
     if SEEN_FILE.exists():
-        return set(json.loads(SEEN_FILE.read_text()))
+        try:
+            return set(json.loads(SEEN_FILE.read_text()))
+        except Exception:
+            pass
     return set()
 
 
 def save_seen(seen: set):
-    SEEN_FILE.write_text(json.dumps(list(seen)))
+    # Храним максимум 3000 последних URL
+    seen_list = list(seen)[-3000:]
+    SEEN_FILE.write_text(json.dumps(seen_list))
 
 
 def item_id(url: str) -> str:
     return hashlib.md5(url.encode()).hexdigest()
 
 
-async def fetch_rss_items() -> list[dict]:
+async def fetch_rss_items(seen: set) -> list[dict]:
     items = []
     cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-    seen = load_seen()
 
     for feed_url in RSS_FEEDS:
         try:
             feed = feedparser.parse(feed_url)
             for entry in feed.entries[:15]:
                 url = entry.get("link", "")
-                if not url or item_id(url) in seen:
+                if not url:
+                    continue
+                uid = item_id(url)
+                if uid in seen:
                     continue
                 published = entry.get("published_parsed")
                 if published:
@@ -182,45 +172,32 @@ async def fetch_rss_items() -> list[dict]:
     return items
 
 
-async def claude_process(rss_items: list[dict]) -> list[dict]:
+async def claude_process(rss_items: list[dict], seen: set) -> list[dict]:
     rss_text = "\n".join(
         f"- [{i['source']}] {i['title']} | {i['url']}"
         for i in rss_items[:80]
     )
     search_queries_text = "\n".join(f"- {q}" for q in SEARCH_QUERIES)
-
     date_from, date_to = get_date_range()
 
     prompt = f"""Ты редактор Telegram-канала «Независимый Портал» — русскоязычного новостного портала обо всём что связано с веществами.
 
-ВАЖНО: Сегодня {date_to}. Ищи ТОЛЬКО новости и исследования опубликованные после {date_from}. Всё что старше — игнорируй полностью.
+ВАЖНО: Сегодня {date_to}. Ищи ТОЛЬКО новости опубликованные после {date_from}. Всё что старше — игнорируй полностью.
 
-Тематика канала:
-- Психоделики и психоделическая медицина (псилоцибин, MDMA, аяуаска, ибогаин, кетамин, ЛСД)
-- Каннабис — легализация, продукты, бизнес, законы
-- Наркополитика — реформы, декриминализация, законы по всему миру
-- Кокаин, фентанил, героин, метамфетамин — трафик, аресты, кризисы
-- Картели и наркотрафик
-- Снижение вреда
-- Нейронаука и психофармакология
-- Лечение зависимости
-- Фармацевтика
-- Новые научные исследования из журналов (Journal of Psychedelic Studies, Neuropsychopharmacology, JAMA Psychiatry и др.)
-- Новые виды псилоцибиновых грибов и этноботанические открытия
-- Новые вещества и их потенциал — малоизученные соединения, независимые исследования
+Тематика: психоделики и психоделическая медицина, каннабис, наркополитика, кокаин/фентанил/героин/метамфетамин, картели, снижение вреда, нейронаука и психофармакология, лечение зависимости, фармацевтика, новые виды грибов и этноботаника, резонансные истории.
 
-Сделай веб-поиск по этим темам — ТОЛЬКО за последние 48 часов (после {date_from}):
+Сделай веб-поиск по этим темам строго за последние 48 часов (после {date_from}):
 {search_queries_text}
 
-Также вот материалы из RSS-лент (уже отфильтрованы по дате):
+Материалы из RSS за последние 48 часов:
 {rss_text}
 
-Найди ВСЕ интересные материалы строго за последние 48 часов. Для научных исследований допускается публикация за последний месяц если это важное исследование. Не фильтруй агрессивно — 10-15 заметок лучше чем пропустить важное.
+Найди ВСЕ интересные материалы за последние 48 часов. Для научных исследований допускается последний месяц если это важное открытие. Присылай до 15 заметок — лучше больше чем пропустить важное.
 
-Формат каждой заметки СТРОГО (без звёздочек, без markdown, без жирного текста, точно как показано):
+Формат СТРОГО (без звёздочек, без markdown, без жирного):
 ЗАГОЛОВОК: [короткий, конкретный, двухчастный через точку]
 ТЕКСТ: [2-4 предложения, только факты, живой язык]
-ДАТА: [дата публикации ДД.ММ.ГГГГ]
+ДАТА: [ДД.ММ.ГГГГ]
 КАТЕГОРИЯ: [исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость / этноботаника]
 ВАЖНОСТЬ: [1-5]
 РЕГИОН: [США / Европа / Латинская Америка / Азия / Россия / Ближний Восток / Африка / Глобально]
@@ -251,7 +228,7 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
         if block.get("type") == "text":
             full_text += block["text"]
 
-    logger.info(f"Claude response preview: {full_text[:500]}")
+    logger.info(f"Claude response preview: {full_text[:300]}")
 
     posts = []
     for chunk in full_text.split("---"):
@@ -277,38 +254,46 @@ async def claude_process(rss_items: list[dict]) -> list[dict]:
                 post["source"] = line.replace("ИСТОЧНИК:", "").strip()
             elif line.startswith("ССЫЛКА:"):
                 post["url"] = line.replace("ССЫЛКА:", "").strip()
-        if post.get("title") and post.get("text"):
-            posts.append(post)
 
-    cutoff_30 = datetime.now(timezone.utc) - timedelta(days=30)
-    filtered = []
-    for post in posts:
+        if not post.get("title") or not post.get("text"):
+            continue
+
+        # Фильтр дублей по URL
+        if post.get("url") and item_id(post["url"]) in seen:
+            logger.info(f"Duplicate skipped: {post['title'][:50]}")
+            continue
+
+        # Фильтр по дате
         date_str = post.get("date", "")
         if date_str:
             try:
                 post_date = datetime.strptime(date_str, "%d.%m.%Y").replace(tzinfo=timezone.utc)
+                cutoff_30 = datetime.now(timezone.utc) - timedelta(days=30)
                 if post_date < cutoff_30:
-                    logger.info(f"Filtered old post: {date_str} — {post.get('title', '')[:50]}")
+                    logger.info(f"Old post filtered: {date_str}")
                     continue
             except ValueError:
                 pass
-        filtered.append(post)
 
-    filtered.sort(key=lambda x: int(x.get("importance", "3") or "3"), reverse=True)
+        posts.append(post)
 
-    logger.info(f"Parsed posts: {len(posts)}, after date filter: {len(filtered)}")
-    return filtered
+    posts.sort(key=lambda x: int(x.get("importance", "3") or "3"), reverse=True)
+    logger.info(f"Posts ready: {len(posts)}")
+    return posts
 
 
 async def run_digest():
     logger.info("Starting digest...")
     bot = Bot(token=BOT_TOKEN)
 
-    rss_items = await fetch_rss_items()
+    seen = load_seen()
+    logger.info(f"Loaded {len(seen)} seen URLs")
+
+    rss_items = await fetch_rss_items(seen)
     logger.info(f"RSS items: {len(rss_items)}")
 
-    posts = await claude_process(rss_items)
-    logger.info(f"Posts ready: {len(posts)}")
+    posts = await claude_process(rss_items, seen)
+    logger.info(f"Posts to send: {len(posts)}")
 
     if not posts:
         await bot.send_message(
@@ -321,15 +306,14 @@ async def run_digest():
         chat_id=ADMIN_CHAT_ID,
         text=(
             f"📋 <b>Дайджест {datetime.now(timezone.utc).strftime('%d.%m.%Y')}</b>\n"
-            f"Проверено RSS-источников: {len(RSS_FEEDS)}\n"
-            f"Найдено из RSS: {len(rss_items)}\n"
-            f"Подготовлено заметок: {len(posts)}\n\n"
+            f"Проверено RSS: {len(RSS_FEEDS)} источников\n"
+            f"Новых из RSS: {len(rss_items)}\n"
+            f"Заметок: {len(posts)}\n\n"
             f"Перешли нужные в канал вручную."
         ),
         parse_mode="HTML",
     )
 
-    seen = load_seen()
     for post in posts:
         icon = CATEGORY_ICONS.get(post.get("category", ""), "📌")
         try:
@@ -360,18 +344,19 @@ async def run_digest():
                 disable_web_page_preview=False,
             )
         except Exception as e:
-            logger.warning(f"Failed to send post: {e}")
+            logger.warning(f"HTML send failed: {e}")
             try:
                 plain = f"{post['title']}\n\n{post['text']}\n\n{post.get('url', '')}"
                 await bot.send_message(chat_id=ADMIN_CHAT_ID, text=plain)
             except Exception as e2:
-                logger.error(f"Failed to send plain post: {e2}")
+                logger.error(f"Plain send failed: {e2}")
+
         if post.get("url"):
             seen.add(item_id(post["url"]))
         await asyncio.sleep(1)
 
     save_seen(seen)
-    logger.info("Digest sent.")
+    logger.info("Done.")
 
 
 if __name__ == "__main__":
