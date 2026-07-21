@@ -38,30 +38,24 @@ RSS_FEEDS = [
     "https://www.vice.com/en/rss",
 ]
 
-PUBMED_QUERIES = [
-    "psilocybin", "MDMA+therapy", "ayahuasca", "ibogaine",
-    "ketamine+depression", "cannabis+policy", "fentanyl",
-    "opioid+crisis", "harm+reduction", "drug+decriminalization",
-    "neuropsychopharmacology", "addiction+treatment", "substance+use+disorder",
-    "psychedelic+neuroscience", "drug+dependence"
+SCIENCE_TERMS = [
+    "psilocybin", "LSD", "DMT", "ayahuasca", "mescaline",
+    "ibogaine", "MDMA", "ketamine", "5-MeO-DMT", "salvinorin",
+    "Banisteriopsis caapi", "Psychotria viridis", "Tabernanthe iboga",
+    "Lophophora williamsii", "Amanita muscaria",
+    "drug decriminalization", "harm reduction", "opioid addiction treatment",
+    "cannabis therapy", "psychedelic therapy",
 ]
-for q in PUBMED_QUERIES:
-    RSS_FEEDS.append(f"https://pubmed.ncbi.nlm.nih.gov/rss/search/?term={q}&limit=10&format=rss")
 
-JOURNAL_FEEDS = [
-    "https://www.tandfonline.com/feed/rss/rjps20",
-    "https://www.nature.com/npp/rss.xml",
-    "https://www.sciencedirect.com/journal/drug-and-alcohol-dependence/rss",
-    "https://jamanetwork.com/rss/site_3/67.xml",
-]
-RSS_FEEDS.extend(JOURNAL_FEEDS)
-
-
-def get_date_range() -> tuple[str, str]:
-    now = datetime.now(timezone.utc)
-    two_days_ago = now - timedelta(hours=48)
-    return two_days_ago.strftime("%B %d, %Y"), now.strftime("%B %d, %Y")
-
+HIGH_WEIGHT_JOURNALS = {
+    "Journal of Psychedelic Studies", "Psychedelic Medicine",
+    "Journal of Psychopharmacology", "JAMA Psychiatry",
+    "The Lancet Psychiatry", "Neuropsychopharmacology",
+    "Molecular Psychiatry", "Biological Psychiatry",
+    "American Journal of Psychiatry", "Nature", "Nature Medicine",
+    "Cell", "PNAS", "British Journal of Pharmacology",
+    "Journal of Ethnopharmacology",
+}
 
 SEARCH_QUERIES = [
     "psilocybin research news",
@@ -70,7 +64,6 @@ SEARCH_QUERIES = [
     "ketamine therapy depression news",
     "psychedelic medicine clinical trial news",
     "LSD microdosing research news",
-    "DMT research news",
     "cannabis legalization news",
     "THC edibles products news",
     "marijuana law reform news",
@@ -81,7 +74,6 @@ SEARCH_QUERIES = [
     "opioid epidemic news",
     "heroin drug trafficking news",
     "methamphetamine bust news",
-    "designer drugs psychoactive news",
     "drug cartel Latin America news",
     "drug trafficking arrest news",
     "narco Mexico Colombia news",
@@ -91,19 +83,14 @@ SEARCH_QUERIES = [
     "neuroscience psychopharmacology research news",
     "addiction treatment breakthrough news",
     "pharma company drug scandal news",
-    "psychedelic study published journal news",
-    "psilocybin clinical trial results published",
-    "MDMA PTSD study results published",
     "наркополитика новости",
     "drug policy Asia Thailand China news",
     "drug policy Europe news",
     "Israel psychedelic research news",
     "Australia drug reform news",
     "new psilocybin mushroom species discovered",
-    "new psychedelic compound discovered research",
     "novel psychoactive substance ethnobotany",
     "drug overdose death news",
-    "drug poisoning contamination news",
 ]
 
 CATEGORY_ICONS = {
@@ -132,28 +119,27 @@ def load_seen() -> set:
 
 
 def save_seen(seen: set):
-    # Храним максимум 3000 последних URL
-    seen_list = list(seen)[-3000:]
-    SEEN_FILE.write_text(json.dumps(seen_list))
+    SEEN_FILE.write_text(json.dumps(list(seen)[-3000:]))
 
 
 def item_id(url: str) -> str:
     return hashlib.md5(url.encode()).hexdigest()
 
 
+def get_date_range() -> tuple[str, str]:
+    now = datetime.now(timezone.utc)
+    return (now - timedelta(hours=48)).strftime("%B %d, %Y"), now.strftime("%B %d, %Y")
+
+
 async def fetch_rss_items(seen: set) -> list[dict]:
     items = []
     cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-
     for feed_url in RSS_FEEDS:
         try:
             feed = feedparser.parse(feed_url)
             for entry in feed.entries[:15]:
                 url = entry.get("link", "")
-                if not url:
-                    continue
-                uid = item_id(url)
-                if uid in seen:
+                if not url or item_id(url) in seen:
                     continue
                 published = entry.get("published_parsed")
                 if published:
@@ -168,35 +154,98 @@ async def fetch_rss_items(seen: set) -> list[dict]:
                 })
         except Exception as e:
             logger.warning(f"RSS error {feed_url}: {e}")
-
     return items
 
 
-async def claude_process(rss_items: list[dict], seen: set) -> list[dict]:
-    rss_text = "\n".join(
-        f"- [{i['source']}] {i['title']} | {i['url']}"
-        for i in rss_items[:80]
-    )
-    search_queries_text = "\n".join(f"- {q}" for q in SEARCH_QUERIES)
+async def fetch_science_articles(seen: set) -> list[dict]:
+    articles = []
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+    async with httpx.AsyncClient(timeout=30) as client:
+        for term in SCIENCE_TERMS:
+            try:
+                resp = await client.get(
+                    "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+                    params={
+                        "query": f"{term} AND FIRST_PDATE:[{cutoff} TO *]",
+                        "format": "json",
+                        "pageSize": 5,
+                        "sort": "date desc",
+                        "resultType": "core",
+                    }
+                )
+                data = resp.json()
+                for r in data.get("resultList", {}).get("result", []):
+                    url = f"https://europepmc.org/article/{r.get('source','')}/{r.get('id','')}"
+                    if item_id(url) in seen:
+                        continue
+                    journal = r.get("journalTitle", "")
+                    articles.append({
+                        "title": r.get("title", ""),
+                        "url": url,
+                        "summary": (r.get("abstractText", "") or r.get("title", ""))[:500],
+                        "source": journal or "Europe PMC",
+                        "is_science": True,
+                        "importance_boost": 1 if journal in HIGH_WEIGHT_JOURNALS else 0,
+                    })
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                logger.warning(f"Europe PMC error for {term}: {e}")
+    logger.info(f"Science articles: {len(articles)}")
+    return articles
+
+
+async def call_claude_with_retry(payload: dict, timeout: int = 300, retries: int = 2) -> dict:
+    """Вызов Claude API с повторной попыткой при таймауте."""
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "anthropic-beta": "web-search-2025-03-05",
+                        "content-type": "application/json",
+                    },
+                    json=payload,
+                )
+                return response.json()
+        except httpx.ReadTimeout:
+            if attempt < retries - 1:
+                logger.warning(f"Claude timeout, retry {attempt + 1}...")
+                await asyncio.sleep(10)
+            else:
+                raise
+    return {}
+
+
+async def claude_process(rss_items: list[dict], science_items: list[dict], seen: set) -> list[dict]:
+    rss_text = "\n".join(f"- [{i['source']}] {i['title']} | {i['url']}" for i in rss_items[:60])
+    science_text = "\n".join(f"- [{i['source']}] {i['title']} | {i['url']}" for i in science_items[:40])
+    search_text = "\n".join(f"- {q}" for q in SEARCH_QUERIES)
     date_from, date_to = get_date_range()
 
     prompt = f"""Ты редактор Telegram-канала «Независимый Портал» — русскоязычного новостного портала обо всём что связано с веществами.
 
-ВАЖНО: Сегодня {date_to}. Ищи ТОЛЬКО новости опубликованные после {date_from}. Всё что старше — игнорируй полностью.
+ВАЖНО: Сегодня {date_to}. Для новостей — только после {date_from}. Для науки — последние 30 дней.
 
-Тематика: психоделики и психоделическая медицина, каннабис, наркополитика, кокаин/фентанил/героин/метамфетамин, картели, снижение вреда, нейронаука и психофармакология, лечение зависимости, фармацевтика, новые виды грибов и этноботаника, резонансные истории.
+Тематика: психоделики, каннабис, наркополитика, кокаин/фентанил/опиоиды, картели, снижение вреда, нейронаука, лечение зависимости, фармацевтика, этноботаника, резонансные истории.
 
-Сделай веб-поиск по этим темам строго за последние 48 часов (после {date_from}):
-{search_queries_text}
+Веб-поиск строго за последние 48 часов:
+{search_text}
 
-Материалы из RSS за последние 48 часов:
+Новости из RSS (48ч):
 {rss_text}
 
-Найди ВСЕ интересные материалы за последние 48 часов. Для научных исследований допускается последний месяц если это важное открытие. Присылай до 15 заметок — лучше больше чем пропустить важное.
+Научные статьи из Europe PMC (30 дней):
+{science_text}
 
-Формат СТРОГО (без звёздочек, без markdown, без жирного):
+Напиши 10-15 заметок. Включи 2-3 научные статьи.
+
+Формат СТРОГО (без звёздочек, без markdown):
 ЗАГОЛОВОК: [короткий, конкретный, двухчастный через точку]
-ТЕКСТ: [2-4 предложения, только факты, живой язык]
+ТЕКСТ: [2-4 предложения, только факты]
+ИСТОЧНИК_ТЕКСТ: [1-2 предложения из оригинала на языке источника]
 ДАТА: [ДД.ММ.ГГГГ]
 КАТЕГОРИЯ: [исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость / этноботаника]
 ВАЖНОСТЬ: [1-5]
@@ -205,23 +254,12 @@ async def claude_process(rss_items: list[dict], seen: set) -> list[dict]:
 ССЫЛКА: [URL]
 ---"""
 
-    async with httpx.AsyncClient(timeout=180) as client:
-        response = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "anthropic-beta": "web-search-2025-03-05",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-sonnet-4-6",
-                "max_tokens": 8000,
-                "tools": [{"type": "web_search_20250305", "name": "web_search"}],
-                "messages": [{"role": "user", "content": prompt}],
-            },
-        )
-        data = response.json()
+    data = await call_claude_with_retry({
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8000,
+        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+        "messages": [{"role": "user", "content": prompt}],
+    })
 
     full_text = ""
     for block in data.get("content", []):
@@ -242,6 +280,8 @@ async def claude_process(rss_items: list[dict], seen: set) -> list[dict]:
                 post["title"] = line.replace("ЗАГОЛОВОК:", "").strip()
             elif line.startswith("ТЕКСТ:"):
                 post["text"] = line.replace("ТЕКСТ:", "").strip()
+            elif line.startswith("ИСТОЧНИК_ТЕКСТ:"):
+                post["source_text"] = line.replace("ИСТОЧНИК_ТЕКСТ:", "").strip()
             elif line.startswith("ДАТА:"):
                 post["date"] = line.replace("ДАТА:", "").strip()
             elif line.startswith("КАТЕГОРИЯ:"):
@@ -257,20 +297,14 @@ async def claude_process(rss_items: list[dict], seen: set) -> list[dict]:
 
         if not post.get("title") or not post.get("text"):
             continue
-
-        # Фильтр дублей по URL
         if post.get("url") and item_id(post["url"]) in seen:
-            logger.info(f"Duplicate skipped: {post['title'][:50]}")
             continue
 
-        # Фильтр по дате
         date_str = post.get("date", "")
         if date_str:
             try:
                 post_date = datetime.strptime(date_str, "%d.%m.%Y").replace(tzinfo=timezone.utc)
-                cutoff_30 = datetime.now(timezone.utc) - timedelta(days=30)
-                if post_date < cutoff_30:
-                    logger.info(f"Old post filtered: {date_str}")
+                if post_date < datetime.now(timezone.utc) - timedelta(days=30):
                     continue
             except ValueError:
                 pass
@@ -278,8 +312,90 @@ async def claude_process(rss_items: list[dict], seen: set) -> list[dict]:
         posts.append(post)
 
     posts.sort(key=lambda x: int(x.get("importance", "3") or "3"), reverse=True)
-    logger.info(f"Posts ready: {len(posts)}")
     return posts
+
+
+async def verify_post(post: dict) -> dict:
+    source_text = post.get("source_text", "")
+    if not source_text:
+        post["verified"] = True
+        post["errors"] = []
+        return post
+
+    verify_prompt = f"""Ты фактчекер. Найди ошибки в заметке.
+
+Заметка (русский):
+{post['title']}
+{post['text']}
+
+Исходный текст источника:
+{source_text}
+
+Проверь:
+1. Имена и топонимы — правильно переведены? (Georgia = штат или страна — решай по контексту)
+2. Даты — каждая дата привязана к своему событию?
+3. Числа — все цифры совпадают с источником?
+4. Внутренняя логика — нет противоречий?
+
+Ответь ТОЛЬКО в JSON без markdown:
+{{"errors": ["ошибка 1"], "clean": true/false}}
+
+Если ошибок нет: {{"errors": [], "clean": true}}"""
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-6",
+                    "max_tokens": 500,
+                    "messages": [{"role": "user", "content": verify_prompt}],
+                },
+            )
+            data = response.json()
+            result = json.loads(data["content"][0]["text"].strip())
+            post["verified"] = result.get("clean", True)
+            post["errors"] = result.get("errors", [])
+    except Exception as e:
+        logger.warning(f"Verify error: {e}")
+        post["verified"] = True
+        post["errors"] = []
+
+    return post
+
+
+def format_post(post: dict) -> str:
+    icon = CATEGORY_ICONS.get(post.get("category", ""), "📌")
+    try:
+        importance = "⭐" * int(post.get("importance", "3") or "3")
+    except ValueError:
+        importance = "⭐⭐⭐"
+
+    meta = []
+    if post.get("date"):
+        meta.append(f"📅 {post['date']}")
+    if post.get("region"):
+        meta.append(f"🌐 {post['region']}")
+    meta.append(importance)
+
+    flag = ""
+    if not post.get("verified", True) and post.get("errors"):
+        flag = f"\n\n🚩 <b>Проверь:</b> {' | '.join(post['errors'])}"
+
+    text = f"{icon} <b>{post['title']}</b>\n\n"
+    text += f"{post['text']}\n\n"
+    text += " · ".join(meta) + "\n"
+    if post.get("source"):
+        text += f"📰 {post['source']}"
+    if post.get("url"):
+        text += f" — <a href='{post['url']}'>читать</a>"
+    text += flag
+    return text
 
 
 async def run_digest():
@@ -289,16 +405,32 @@ async def run_digest():
     seen = load_seen()
     logger.info(f"Loaded {len(seen)} seen URLs")
 
-    rss_items = await fetch_rss_items(seen)
-    logger.info(f"RSS items: {len(rss_items)}")
+    rss_items, science_items = await asyncio.gather(
+        fetch_rss_items(seen),
+        fetch_science_articles(seen)
+    )
+    logger.info(f"RSS: {len(rss_items)}, Science: {len(science_items)}")
 
-    posts = await claude_process(rss_items, seen)
-    logger.info(f"Posts to send: {len(posts)}")
+    try:
+        posts = await claude_process(rss_items, science_items, seen)
+    except httpx.ReadTimeout:
+        logger.error("Claude timed out after retries")
+        await bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text="Независимый Портал: Claude не ответил вовремя. Попробуй запустить вручную позже."
+        )
+        return
+
+    logger.info(f"Posts before verify: {len(posts)}")
+
+    posts = list(await asyncio.gather(*[verify_post(p) for p in posts]))
+    flagged = sum(1 for p in posts if not p.get("verified", True))
+    logger.info(f"Posts ready: {len(posts)}, flagged: {flagged}")
 
     if not posts:
         await bot.send_message(
             chat_id=ADMIN_CHAT_ID,
-            text="Независимый Портал: свежих новостей за последние 48 часов не найдено."
+            text="Независимый Портал: свежих материалов не найдено."
         )
         return
 
@@ -306,36 +438,17 @@ async def run_digest():
         chat_id=ADMIN_CHAT_ID,
         text=(
             f"📋 <b>Дайджест {datetime.now(timezone.utc).strftime('%d.%m.%Y')}</b>\n"
-            f"Проверено RSS: {len(RSS_FEEDS)} источников\n"
-            f"Новых из RSS: {len(rss_items)}\n"
-            f"Заметок: {len(posts)}\n\n"
+            f"RSS источников: {len(RSS_FEEDS)}\n"
+            f"Новостей: {len(rss_items)}\n"
+            f"Научных статей: {len(science_items)}\n"
+            f"Заметок: {len(posts)} (🚩 с флагом: {flagged})\n\n"
             f"Перешли нужные в канал вручную."
         ),
         parse_mode="HTML",
     )
 
     for post in posts:
-        icon = CATEGORY_ICONS.get(post.get("category", ""), "📌")
-        try:
-            importance = "⭐" * int(post.get("importance", "3") or "3")
-        except ValueError:
-            importance = "⭐⭐⭐"
-
-        meta = []
-        if post.get("date"):
-            meta.append(f"📅 {post['date']}")
-        if post.get("region"):
-            meta.append(f"🌐 {post['region']}")
-        meta.append(importance)
-
-        text = f"{icon} <b>{post['title']}</b>\n\n"
-        text += f"{post['text']}\n\n"
-        text += " · ".join(meta) + "\n"
-        if post.get("source"):
-            text += f"📰 {post['source']}"
-        if post.get("url"):
-            text += f" — <a href='{post['url']}'>читать</a>"
-
+        text = format_post(post)
         try:
             await bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
