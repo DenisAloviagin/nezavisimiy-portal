@@ -245,6 +245,7 @@ async def claude_process(rss_items: list[dict], science_items: list[dict], seen:
 Формат СТРОГО (без звёздочек, без markdown):
 ЗАГОЛОВОК: [короткий, конкретный, двухчастный через точку]
 ТЕКСТ: [2-4 предложения, только факты]
+THREADS: [1-2 предложения для Threads с эмодзи в начале — суть новости + ссылка на источник в конце]
 ИСТОЧНИК_ТЕКСТ: [1-2 предложения из оригинала на языке источника]
 ДАТА: [ДД.ММ.ГГГГ]
 КАТЕГОРИЯ: [исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость / этноботаника]
@@ -280,6 +281,8 @@ async def claude_process(rss_items: list[dict], science_items: list[dict], seen:
                 post["title"] = line.replace("ЗАГОЛОВОК:", "").strip()
             elif line.startswith("ТЕКСТ:"):
                 post["text"] = line.replace("ТЕКСТ:", "").strip()
+            elif line.startswith("THREADS:"):
+                post["threads"] = line.replace("THREADS:", "").strip()
             elif line.startswith("ИСТОЧНИК_ТЕКСТ:"):
                 post["source_text"] = line.replace("ИСТОЧНИК_ТЕКСТ:", "").strip()
             elif line.startswith("ДАТА:"):
@@ -383,10 +386,6 @@ def format_post(post: dict) -> str:
         meta.append(f"🌐 {post['region']}")
     meta.append(importance)
 
-    flag = ""
-    if not post.get("verified", True) and post.get("errors"):
-        flag = f"\n\n🚩 <b>Проверь:</b> {' | '.join(post['errors'])}"
-
     text = f"{icon} <b>{post['title']}</b>\n\n"
     text += f"{post['text']}\n\n"
     text += " · ".join(meta) + "\n"
@@ -394,7 +393,6 @@ def format_post(post: dict) -> str:
         text += f"📰 {post['source']}"
     if post.get("url"):
         text += f" — <a href='{post['url']}'>читать</a>"
-    text += flag
     return text
 
 
@@ -425,7 +423,9 @@ async def run_digest():
 
     posts = list(await asyncio.gather(*[verify_post(p) for p in posts]))
     flagged = sum(1 for p in posts if not p.get("verified", True))
-    logger.info(f"Posts ready: {len(posts)}, flagged: {flagged}")
+    # Отсеиваем заметки с ошибками — тебе приходят только чистые
+    posts = [p for p in posts if p.get("verified", True)]
+    logger.info(f"Posts ready: {len(posts)}, filtered out with errors: {flagged}")
 
     if not posts:
         await bot.send_message(
@@ -441,7 +441,7 @@ async def run_digest():
             f"RSS источников: {len(RSS_FEEDS)}\n"
             f"Новостей: {len(rss_items)}\n"
             f"Научных статей: {len(science_items)}\n"
-            f"Заметок: {len(posts)} (🚩 с флагом: {flagged})\n\n"
+            f"Заметок: {len(posts)}\n\n"
             f"Перешли нужные в канал вручную."
         ),
         parse_mode="HTML",
@@ -463,6 +463,18 @@ async def run_digest():
                 await bot.send_message(chat_id=ADMIN_CHAT_ID, text=plain)
             except Exception as e2:
                 logger.error(f"Plain send failed: {e2}")
+
+        # Второе сообщение — короткая версия для Threads
+        if post.get("threads"):
+            try:
+                await bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text=f"🧵 <b>Threads:</b>\n{post['threads']}",
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.warning(f"Threads send failed: {e}")
 
         if post.get("url"):
             seen.add(item_id(post["url"]))
