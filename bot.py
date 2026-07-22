@@ -70,7 +70,6 @@ SEARCH_QUERIES = [
     "drug policy reform decriminalization news",
     "harm reduction naloxone news",
     "cocaine bust arrest seizure news",
-    "fentanyl overdose crisis news",
     "opioid epidemic news",
     "heroin drug trafficking news",
     "methamphetamine bust news",
@@ -244,8 +243,8 @@ async def claude_process(rss_items: list[dict], science_items: list[dict], seen:
 
 Формат СТРОГО (без звёздочек, без markdown):
 ЗАГОЛОВОК: [короткий, конкретный, двухчастный через точку]
-ТЕКСТ: [2-4 предложения, только факты]
-THREADS: [1-2 предложения для Threads с эмодзи в начале — суть новости + ссылка на источник в конце]
+ТЕКСТ: [строго 2-3 предложения, максимум 300 символов, только факты]
+THREADS: [1-2 предложения для Threads с эмодзи в начале, максимум 200 символов, суть новости + ссылка в конце]
 ИСТОЧНИК_ТЕКСТ: [1-2 предложения из оригинала на языке источника]
 ДАТА: [ДД.ММ.ГГГГ]
 КАТЕГОРИЯ: [исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость / этноботаника]
@@ -361,15 +360,24 @@ async def verify_post(post: dict) -> dict:
                 },
             )
             data = response.json()
-            result = json.loads(data["content"][0]["text"].strip())
+            raw = data["content"][0]["text"].strip()
+            if not raw:
+                raise ValueError("Empty response")
+            result = json.loads(raw)
             post["verified"] = result.get("clean", True)
             post["errors"] = result.get("errors", [])
     except Exception as e:
-        logger.warning(f"Verify error: {e}")
+        logger.warning(f"Verify error: {e} — marking as clean")
         post["verified"] = True
         post["errors"] = []
 
     return post
+
+
+def clean_text(text: str) -> str:
+    """Убираем длинные тире и обрезаем до лимита Telegram."""
+    text = text.replace("—", "-").replace("–", "-")
+    return text
 
 
 def format_post(post: dict) -> str:
@@ -386,14 +394,14 @@ def format_post(post: dict) -> str:
         meta.append(f"🌐 {post['region']}")
     meta.append(importance)
 
-    text = f"{icon} <b>{post['title']}</b>\n\n"
-    text += f"{post['text']}\n\n"
+    text = f"{icon} <b>{clean_text(post['title'])}</b>\n\n"
+    text += f"{clean_text(post['text'])}\n\n"
     text += " · ".join(meta) + "\n"
     if post.get("source"):
         text += f"📰 {post['source']}"
     if post.get("url"):
         text += f" — <a href='{post['url']}'>читать</a>"
-    return text
+    return text[:4000]
 
 
 async def run_digest():
@@ -464,13 +472,13 @@ async def run_digest():
             except Exception as e2:
                 logger.error(f"Plain send failed: {e2}")
 
-        # Второе сообщение — короткая версия для Threads
+        # Второе сообщение — короткая версия для Threads без пометок
         if post.get("threads"):
             try:
+                threads_text = clean_text(post['threads'])[:500]
                 await bot.send_message(
                     chat_id=ADMIN_CHAT_ID,
-                    text=f"🧵 <b>Threads:</b>\n{post['threads']}",
-                    parse_mode="HTML",
+                    text=threads_text,
                     disable_web_page_preview=True,
                 )
             except Exception as e:
