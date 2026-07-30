@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 ADMIN_CHAT_ID = int(os.environ["ADMIN_CHAT_ID"])
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-SEEN_FILE = Path("seen_ids.json")
+
+# ID сообщения с seen_ids хранится в этом файле
+SEEN_MSG_FILE = Path("seen_msg_id.txt")
 
 RSS_FEEDS = [
     "https://psychedelicalpha.com/feed",
@@ -108,19 +110,6 @@ CATEGORY_ICONS = {
 }
 
 
-def load_seen() -> set:
-    if SEEN_FILE.exists():
-        try:
-            return set(json.loads(SEEN_FILE.read_text()))
-        except Exception:
-            pass
-    return set()
-
-
-def save_seen(seen: set):
-    SEEN_FILE.write_text(json.dumps(list(seen)[-3000:]))
-
-
 def item_id(url: str) -> str:
     return hashlib.md5(url.encode()).hexdigest()
 
@@ -129,6 +118,73 @@ def get_date_range() -> tuple[str, str]:
     now = datetime.now(timezone.utc)
     return (now - timedelta(hours=48)).strftime("%B %d, %Y"), now.strftime("%B %d, %Y")
 
+
+def clean_text(text: str) -> str:
+    return text.replace("—", "-").replace("–", "-")
+
+
+# ─── Хранение seen_ids в Telegram ────────────────────────────────────────────
+
+async def load_seen(bot: Bot) -> set:
+    """Загружаем список просмотренных URL из Telegram."""
+    if SEEN_MSG_FILE.exists():
+        try:
+            msg_id = int(SEEN_MSG_FILE.read_text().strip())
+            # Пересылаем сообщение себе чтобы прочитать
+            forwarded = await bot.forward_message(
+                chat_id=ADMIN_CHAT_ID,
+                from_chat_id=ADMIN_CHAT_ID,
+                message_id=msg_id
+            )
+            text = forwarded.text or ""
+            # Удаляем пересланное сообщение
+            await bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=forwarded.message_id)
+
+            if text.startswith("SEEN:"):
+                ids = text[5:].split(",")
+                seen = set(i.strip() for i in ids if i.strip())
+                logger.info(f"Loaded {len(seen)} seen URLs from Telegram")
+                return seen
+        except Exception as e:
+            logger.warning(f"Could not load seen from Telegram: {e}")
+
+    logger.info("Starting with empty seen set")
+    return set()
+
+
+async def save_seen(bot: Bot, seen: set):
+    """Сохраняем список просмотренных URL в Telegram."""
+    seen_list = list(seen)[-2000:]  # максимум 2000
+    text = "SEEN:" + ",".join(seen_list)
+
+    try:
+        # Удаляем старое сообщение если есть
+        if SEEN_MSG_FILE.exists():
+            try:
+                old_msg_id = int(SEEN_MSG_FILE.read_text().strip())
+                await bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=old_msg_id)
+            except Exception:
+                pass
+
+        # Отправляем новое служебное сообщение
+        msg = await bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=text[:4000],
+        )
+        SEEN_MSG_FILE.write_text(str(msg.message_id))
+
+        # Скрываем его — удаляем из чата
+        await asyncio.sleep(0.5)
+        await bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=msg.message_id)
+        logger.info(f"Saved {len(seen_list)} seen URLs (message deleted)")
+
+    except Exception as e:
+        logger.warning(f"Could not save seen to Telegram: {e}")
+        # Фолбэк — сохраняем в файл
+        Path("seen_ids.json").write_text(json.dumps(seen_list))
+
+
+# ─── RSS и наука ─────────────────────────────────────────────────────────────
 
 async def fetch_rss_items(seen: set) -> list[dict]:
     items = []
@@ -193,8 +249,9 @@ async def fetch_science_articles(seen: set) -> list[dict]:
     return articles
 
 
+# ─── Claude ──────────────────────────────────────────────────────────────────
+
 async def call_claude_with_retry(payload: dict, timeout: int = 300, retries: int = 2) -> dict:
-    """Вызов Claude API с повторной попыткой при таймауте."""
     for attempt in range(retries):
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -228,7 +285,7 @@ async def claude_process(rss_items: list[dict], science_items: list[dict], seen:
 
 ВАЖНО: Сегодня {date_to}. Для новостей — только после {date_from}. Для науки — последние 30 дней.
 
-Тематика: психоделики, каннабис, наркополитика, кокаин/фентанил/опиоиды, картели, снижение вреда, нейронаука, лечение зависимости, фармацевтика, этноботаника, резонансные истории.
+Тематика: психоделики, каннабис, наркополитика, кокаин/опиоиды/метамфетамин, картели, снижение вреда, нейронаука, лечение зависимости, фармацевтика, этноботаника, резонансные истории.
 
 Веб-поиск строго за последние 48 часов:
 {search_text}
@@ -244,8 +301,7 @@ async def claude_process(rss_items: list[dict], science_items: list[dict], seen:
 Формат СТРОГО (без звёздочек, без markdown):
 ЗАГОЛОВОК: [короткий, конкретный, двухчастный через точку]
 ТЕКСТ: [строго 2-3 предложения, максимум 300 символов, только факты]
-THREADS: [1-2 предложения для Threads с эмодзи в начале, максимум 200 символов, суть новости + ссылка в конце]
-ИСТОЧНИК_ТЕКСТ: [1-2 предложения из оригинала на языке источника]
+THREADS: [1-2 предложения с эмодзи в начале, максимум 200 символов, суть + ссылка в конце]
 ДАТА: [ДД.ММ.ГГГГ]
 КАТЕГОРИЯ: [исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость / этноботаника]
 ВАЖНОСТЬ: [1-5]
@@ -282,8 +338,6 @@ THREADS: [1-2 предложения для Threads с эмодзи в нача�
                 post["text"] = line.replace("ТЕКСТ:", "").strip()
             elif line.startswith("THREADS:"):
                 post["threads"] = line.replace("THREADS:", "").strip()
-            elif line.startswith("ИСТОЧНИК_ТЕКСТ:"):
-                post["source_text"] = line.replace("ИСТОЧНИК_ТЕКСТ:", "").strip()
             elif line.startswith("ДАТА:"):
                 post["date"] = line.replace("ДАТА:", "").strip()
             elif line.startswith("КАТЕГОРИЯ:"):
@@ -307,6 +361,7 @@ THREADS: [1-2 предложения для Threads с эмодзи в нача�
             try:
                 post_date = datetime.strptime(date_str, "%d.%m.%Y").replace(tzinfo=timezone.utc)
                 if post_date < datetime.now(timezone.utc) - timedelta(days=30):
+                    logger.info(f"Old post filtered: {date_str}")
                     continue
             except ValueError:
                 pass
@@ -314,21 +369,11 @@ THREADS: [1-2 предложения для Threads с эмодзи в нача�
         posts.append(post)
 
     posts.sort(key=lambda x: int(x.get("importance", "3") or "3"), reverse=True)
+    logger.info(f"Posts ready: {len(posts)}")
     return posts
 
 
-async def verify_post(post: dict) -> dict:
-    """Верификация отключена - все посты проходят."""
-    post["verified"] = True
-    post["errors"] = []
-    return post
-
-
-def clean_text(text: str) -> str:
-    """Убираем длинные тире и обрезаем до лимита Telegram."""
-    text = text.replace("—", "-").replace("–", "-")
-    return text
-
+# ─── Форматирование ───────────────────────────────────────────────────────────
 
 def format_post(post: dict) -> str:
     icon = CATEGORY_ICONS.get(post.get("category", ""), "📌")
@@ -354,12 +399,13 @@ def format_post(post: dict) -> str:
     return text[:4000]
 
 
+# ─── Главная функция ──────────────────────────────────────────────────────────
+
 async def run_digest():
     logger.info("Starting digest...")
     bot = Bot(token=BOT_TOKEN)
 
-    seen = load_seen()
-    logger.info(f"Loaded {len(seen)} seen URLs")
+    seen = await load_seen(bot)
 
     rss_items, science_items = await asyncio.gather(
         fetch_rss_items(seen),
@@ -373,32 +419,24 @@ async def run_digest():
         logger.error("Claude timed out after retries")
         await bot.send_message(
             chat_id=ADMIN_CHAT_ID,
-            text="Независимый Портал: Claude не ответил вовремя. Попробуй запустить вручную позже."
+            text="Независимый Портал: Claude не ответил вовремя. Попробуй Trigger Run позже."
         )
         return
-
-    logger.info(f"Posts before verify: {len(posts)}")
-
-    posts = list(await asyncio.gather(*[verify_post(p) for p in posts]))
-    flagged = sum(1 for p in posts if not p.get("verified", True))
-    # Отсеиваем заметки с ошибками — тебе приходят только чистые
-    posts = [p for p in posts if p.get("verified", True)]
-    logger.info(f"Posts ready: {len(posts)}, filtered out with errors: {flagged}")
 
     if not posts:
         await bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text="Независимый Портал: свежих материалов не найдено."
         )
+        await save_seen(bot, seen)
         return
 
     await bot.send_message(
         chat_id=ADMIN_CHAT_ID,
         text=(
             f"📋 <b>Дайджест {datetime.now(timezone.utc).strftime('%d.%m.%Y')}</b>\n"
-            f"RSS источников: {len(RSS_FEEDS)}\n"
-            f"Новостей: {len(rss_items)}\n"
-            f"Научных статей: {len(science_items)}\n"
+            f"RSS: {len(rss_items)} новостей\n"
+            f"Наука: {len(science_items)} статей\n"
             f"Заметок: {len(posts)}\n\n"
             f"Перешли нужные в канал вручную."
         ),
@@ -406,6 +444,7 @@ async def run_digest():
     )
 
     for post in posts:
+        # Основное сообщение для канала
         text = format_post(post)
         try:
             await bot.send_message(
@@ -422,10 +461,10 @@ async def run_digest():
             except Exception as e2:
                 logger.error(f"Plain send failed: {e2}")
 
-        # Второе сообщение — короткая версия для Threads без пометок
+        # Короткое сообщение для Threads
         if post.get("threads"):
             try:
-                threads_text = clean_text(post['threads'])[:500]
+                threads_text = clean_text(post["threads"])[:500]
                 await bot.send_message(
                     chat_id=ADMIN_CHAT_ID,
                     text=threads_text,
@@ -438,7 +477,7 @@ async def run_digest():
             seen.add(item_id(post["url"]))
         await asyncio.sleep(1)
 
-    save_seen(seen)
+    await save_seen(bot, seen)
     logger.info("Done.")
 
 
