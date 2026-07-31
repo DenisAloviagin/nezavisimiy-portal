@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 ADMIN_CHAT_ID = int(os.environ["ADMIN_CHAT_ID"])
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-
-# ID сообщения с seen_ids хранится в этом файле
-SEEN_MSG_FILE = Path("seen_msg_id.txt")
+RENDER_API_KEY = os.environ.get("RENDER_API_KEY", "")
+RENDER_SERVICE_ID = os.environ.get("RENDER_SERVICE_ID", "")
+SEEN_MSG_ID = os.environ.get("SEEN_MSG_ID", "")
 
 RSS_FEEDS = [
     "https://psychedelicalpha.com/feed",
@@ -130,46 +130,83 @@ def clean_text(text: str) -> str:
     return text.replace("—", "-").replace("–", "-")
 
 
-# ─── Хранение seen_ids в Telegram ────────────────────────────────────────────
+# ─── Хранение seen_ids через Render API ──────────────────────────────────────
+
+async def update_render_env(key: str, value: str):
+    """Обновляем переменную окружения на Render через API."""
+    if not RENDER_API_KEY or not RENDER_SERVICE_ID:
+        logger.warning("RENDER_API_KEY or RENDER_SERVICE_ID not set, skipping env update")
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            # Получаем текущие env vars
+            resp = await client.get(
+                f"https://api.render.com/v1/services/{RENDER_SERVICE_ID}/env-vars",
+                headers={"Authorization": f"Bearer {RENDER_API_KEY}"},
+            )
+            env_vars = resp.json()
+
+            # Находим нужную переменную и обновляем
+            updated = False
+            for var in env_vars:
+                if var.get("key") == key:
+                    await client.put(
+                        f"https://api.render.com/v1/services/{RENDER_SERVICE_ID}/env-vars/{var['id']}",
+                        headers={"Authorization": f"Bearer {RENDER_API_KEY}", "Content-Type": "application/json"},
+                        json={"value": value},
+                    )
+                    updated = True
+                    break
+
+            if not updated:
+                # Создаём новую переменную
+                await client.post(
+                    f"https://api.render.com/v1/services/{RENDER_SERVICE_ID}/env-vars",
+                    headers={"Authorization": f"Bearer {RENDER_API_KEY}", "Content-Type": "application/json"},
+                    json={"key": key, "value": value},
+                )
+        logger.info(f"Updated Render env var: {key}")
+    except Exception as e:
+        logger.warning(f"Failed to update Render env: {e}")
+
 
 async def load_seen(bot: Bot) -> set:
-    """Загружаем список просмотренных URL из Telegram."""
-    if SEEN_MSG_FILE.exists():
-        try:
-            msg_id = int(SEEN_MSG_FILE.read_text().strip())
-            # Пересылаем сообщение себе чтобы прочитать
-            forwarded = await bot.forward_message(
-                chat_id=ADMIN_CHAT_ID,
-                from_chat_id=ADMIN_CHAT_ID,
-                message_id=msg_id
-            )
-            text = forwarded.text or ""
-            # Удаляем пересланное сообщение
-            await bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=forwarded.message_id)
+    """Загружаем seen_ids из Telegram сообщения по ID из env."""
+    if not SEEN_MSG_ID:
+        logger.info("No SEEN_MSG_ID, starting fresh")
+        return set()
 
-            if text.startswith("SEEN:"):
-                ids = text[5:].split(",")
-                seen = set(i.strip() for i in ids if i.strip())
-                logger.info(f"Loaded {len(seen)} seen URLs from Telegram")
-                return seen
-        except Exception as e:
-            logger.warning(f"Could not load seen from Telegram: {e}")
+    try:
+        msg_id = int(SEEN_MSG_ID)
+        forwarded = await bot.forward_message(
+            chat_id=ADMIN_CHAT_ID,
+            from_chat_id=ADMIN_CHAT_ID,
+            message_id=msg_id
+        )
+        text = forwarded.text or ""
+        await bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=forwarded.message_id)
 
-    logger.info("Starting with empty seen set")
+        if text.startswith("SEEN:"):
+            ids = [i.strip() for i in text[5:].split(",") if i.strip()]
+            logger.info(f"Loaded {len(ids)} seen URLs from Telegram msg {msg_id}")
+            return set(ids)
+    except Exception as e:
+        logger.warning(f"Could not load seen from Telegram: {e}")
+
     return set()
 
 
 async def save_seen(bot: Bot, seen: set):
-    """Сохраняем список просмотренных URL в Telegram."""
-    seen_list = list(seen)[-2000:]  # максимум 2000
+    """Сохраняем seen_ids в Telegram и обновляем ID в Render env."""
+    seen_list = list(seen)[-2000:]
     text = "SEEN:" + ",".join(seen_list)
 
     try:
-        # Удаляем старое сообщение если есть
-        if SEEN_MSG_FILE.exists():
+        # Удаляем старое сообщение
+        if SEEN_MSG_ID:
             try:
-                old_msg_id = int(SEEN_MSG_FILE.read_text().strip())
-                await bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=old_msg_id)
+                await bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=int(SEEN_MSG_ID))
             except Exception:
                 pass
 
@@ -178,17 +215,18 @@ async def save_seen(bot: Bot, seen: set):
             chat_id=ADMIN_CHAT_ID,
             text=text[:4000],
         )
-        SEEN_MSG_FILE.write_text(str(msg.message_id))
+        new_msg_id = str(msg.message_id)
 
-        # Скрываем его — удаляем из чата
+        # Сразу удаляем из чата чтобы не мешало
         await asyncio.sleep(0.5)
         await bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=msg.message_id)
-        logger.info(f"Saved {len(seen_list)} seen URLs (message deleted)")
+
+        # Сохраняем новый ID в Render env
+        await update_render_env("SEEN_MSG_ID", new_msg_id)
+        logger.info(f"Saved {len(seen_list)} seen URLs, new msg_id={new_msg_id}")
 
     except Exception as e:
-        logger.warning(f"Could not save seen to Telegram: {e}")
-        # Фолбэк — сохраняем в файл
-        Path("seen_ids.json").write_text(json.dumps(seen_list))
+        logger.warning(f"Could not save seen: {e}")
 
 
 # ─── RSS и наука ─────────────────────────────────────────────────────────────
@@ -290,7 +328,7 @@ async def claude_process(rss_items: list[dict], science_items: list[dict], seen:
 
     prompt = f"""Ты редактор Telegram-канала «Независимый Портал» — русскоязычного новостного портала обо всём что связано с веществами.
 
-ВАЖНО: Сегодня {date_to}. Для новостей — только после {date_from}. Для науки — последние 30 дней.
+ВАЖНО: Сегодня {date_to}. Для новостей - только после {date_from}. Для науки - последние 30 дней.
 
 Тематика: психоделики, каннабис, наркополитика, кокаин/опиоиды/метамфетамин, картели, снижение вреда, нейронаука, лечение зависимости, фармацевтика, этноботаника, резонансные истории.
 
@@ -329,8 +367,6 @@ THREADS: [1-2 предложения с эмодзи в начале, макси
         if block.get("type") == "text":
             full_text += block["text"]
 
-    logger.info(f"Claude response preview: {full_text[:300]}")
-
     posts = []
     for chunk in full_text.split("---"):
         chunk = chunk.strip()
@@ -368,7 +404,6 @@ THREADS: [1-2 предложения с эмодзи в начале, макси
             try:
                 post_date = datetime.strptime(date_str, "%d.%m.%Y").replace(tzinfo=timezone.utc)
                 if post_date < datetime.now(timezone.utc) - timedelta(days=30):
-                    logger.info(f"Old post filtered: {date_str}")
                     continue
             except ValueError:
                 pass
@@ -423,7 +458,7 @@ async def run_digest():
     try:
         posts = await claude_process(rss_items, science_items, seen)
     except httpx.ReadTimeout:
-        logger.error("Claude timed out after retries")
+        logger.error("Claude timed out")
         await bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text="Независимый Портал: Claude не ответил вовремя. Попробуй Trigger Run позже."
@@ -451,7 +486,6 @@ async def run_digest():
     )
 
     for post in posts:
-        # Основное сообщение для канала
         text = format_post(post)
         try:
             await bot.send_message(
@@ -468,13 +502,11 @@ async def run_digest():
             except Exception as e2:
                 logger.error(f"Plain send failed: {e2}")
 
-        # Короткое сообщение для Threads
         if post.get("threads"):
             try:
-                threads_text = clean_text(post["threads"])[:500]
                 await bot.send_message(
                     chat_id=ADMIN_CHAT_ID,
-                    text=threads_text,
+                    text=clean_text(post["threads"])[:500],
                     disable_web_page_preview=True,
                 )
             except Exception as e:
