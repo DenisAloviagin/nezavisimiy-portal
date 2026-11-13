@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import re
+import html
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
@@ -27,99 +28,69 @@ FRESH_DAYS = 14
 ARCHIVE_DAYS = 90
 
 RSS_FEEDS = [
-    "https://psychedelicalpha.com/feed",
-    "https://lucid.news/feed/",
-    "https://thethirdwave.co/feed/",
-    "https://doubleblindmag.com/feed/",
+    # Бразилия
+    "https://g1.globo.com/rss/g1/sc/santa-catarina/",
+    "https://g1.globo.com/rss/g1/pop-arte/",
+    "https://g1.globo.com/rss/g1/mundo/",
+    "https://g1.globo.com/rss/g1/economia/",
+    "https://agenciabrasil.ebc.com.br/feed/ultimasnoticias/feed.xml",
+    # Психоделики: одна рубрика, оставляем самое сильное
     "https://chacruna.net/feed/",
-    "https://maps.org/feed/",
-    "https://www.iceers.org/feed/",
-    "https://psychedelicstoday.com/feed/",
-    "https://psychedelicspotlight.com/feed/",
-    "https://microdose.com/feed/",
-    "https://sociedelic.com/feed/",
-    "https://www.beckleyfoundation.org/feed/",
-    "https://idpc.net/rss.xml",
-    "https://erowid.org/rss/columns.xml",
-    "https://drugpolicy.org/feed/",
-    "https://transformdrugs.org/feed/",
+    "https://lucid.news/feed/",
+    "https://psychedelicalpha.com/feed",
     "https://filtermag.org/feed/",
-    "https://www.wola.org/feed/",
-    "https://insightcrime.org/feed/",
-    "https://www.release.org.uk/feed",
-    "https://meduza.io/rss/all",
-    "https://www.bangkokpost.com/rss/data/topstories.xml",
-    "https://www.irrawaddy.com/feed",
-    "https://www.vice.com/en/rss",
 ]
 
-SCIENCE_TERMS = [
-    "psilocybin", "LSD", "DMT", "ayahuasca", "mescaline",
-    "ibogaine", "MDMA", "ketamine", "5-MeO-DMT", "salvinorin",
-    "Banisteriopsis caapi", "Psychotria viridis", "Tabernanthe iboga",
-    "Lophophora williamsii", "Amanita muscaria",
-    "drug decriminalization", "harm reduction", "opioid addiction treatment",
-    "cannabis therapy", "psychedelic therapy",
-]
-
-HIGH_WEIGHT_JOURNALS = {
-    "Journal of Psychedelic Studies", "Psychedelic Medicine",
-    "Journal of Psychopharmacology", "JAMA Psychiatry",
-    "The Lancet Psychiatry", "Neuropsychopharmacology",
-    "Molecular Psychiatry", "Biological Psychiatry",
-    "American Journal of Psychiatry", "Nature", "Nature Medicine",
-    "Cell", "PNAS", "British Journal of Pharmacology",
-    "Journal of Ethnopharmacology",
-}
+# Ежедневный сбор: свежее 3 дней идёт как есть, 3-7 дней с пометкой АРХИВ, старше 7 не берём
+FRESH_DAYS = 3
+ARCHIVE_DAYS = 7
 
 SEARCH_QUERIES = [
-    "psilocybin research news",
-    "MDMA therapy FDA news",
-    "ayahuasca ibogaine news",
-    "ketamine therapy depression news",
-    "psychedelic medicine clinical trial news",
-    "LSD microdosing research news",
-    "cannabis legalization news",
-    "THC edibles products news",
-    "marijuana law reform news",
-    "drug policy reform decriminalization news",
-    "harm reduction naloxone news",
-    "cocaine bust arrest seizure news",
-    "opioid epidemic news",
-    "heroin drug trafficking news",
-    "methamphetamine bust news",
-    "drug cartel Latin America news",
-    "drug trafficking arrest news",
-    "narco Mexico Colombia news",
-    "celebrity drug arrest news",
-    "politician drugs scandal news",
-    "drug court case verdict news",
-    "neuroscience psychopharmacology research news",
-    "addiction treatment breakthrough news",
-    "pharma company drug scandal news",
-    "наркополитика новости",
-    "drug policy Asia Thailand China news",
-    "drug policy Europe news",
-    "Israel psychedelic research news",
-    "Australia drug reform news",
-    "new psilocybin mushroom species discovered",
-    "novel psychoactive substance ethnobotany",
-    "drug overdose death news",
+    "Brasil notícia curiosa bizarra hoje",
+    "Brazil weird news viral",
+    "Florianópolis notícia curiosa",
+    "Brasil animal selvagem notícia hoje",
+    "Brasil achado inusitado descoberta",
+    "Florianópolis notícias hoje",
+    "Santa Catarina notícias hoje praia",
+    "Florianópolis turismo temporada verão",
+    "Santa Catarina clima tempestade alerta",
+    "NSC Total Florianópolis cotidiano",
+    "ND Mais Florianópolis",
+    "Brasil custo de vida preços supermercado",
+    "Brasil imigrantes estrangeiros nova regra visto",
+    "Brasil lei nova entra em vigor",
+    "Brasil dólar real cotação hoje",
+    "Brazil expats news",
+    "Brasil cultura festa tradição notícia",
+    "Brasil gastronomia comida típica notícia",
+    "Brasil futebol notícia polêmica",
+    "Brasil carnaval novidades",
+    "Brasil música cultura pop notícia",
+    "Amazônia notícia descoberta",
+    "Brasil meio ambiente fauna notícia",
+    "Brasil crime caso nacional repercussão",
+    "Brasil operação polícia facção notícia",
+    "Brasil STF decisão polêmica",
+    "Brasil ayahuasca regulamentação notícia",
+    "Brasil cannabis STF Anvisa notícia",
+    "Brasil psicodélicos pesquisa notícia",
+    "psychedelics Brazil news",
 ]
 
 CATEGORY_ICONS = {
-    "исследование": "🔬",
-    "политика": "🏛",
-    "психоделики": "💊",
-    "регион": "🌍",
-    "резонанс": "🔥",
+    "странное": "🤯",
+    "санта-катарина": "🏝",
+    "быт": "🛒",
+    "закон": "⚖️",
+    "культура": "🎭",
+    "еда": "🍽",
+    "спорт": "⚽️",
+    "природа": "🌴",
     "криминал": "🚔",
+    "резонанс": "🔥",
+    "психоделики": "💊",
     "каннабис": "🌿",
-    "опиоиды": "⚠️",
-    "нейронаука": "🧠",
-    "фармакология": "⚗️",
-    "зависимость": "🔗",
-    "этноботаника": "🍄",
 }
 
 # Паттерны для извлечения дат событий из текста
@@ -136,7 +107,7 @@ OPINION_MARKERS = ['oped', 'op-ed', 'opinion', 'tribune', 'commentary', 'column'
 # ─── Утилиты ─────────────────────────────────────────────────────────────────
 
 def clean_text(text: str) -> str:
-    return text.replace("—", "-").replace("–", "-")
+    return html.escape(text.replace("—", "-").replace("–", "-"), quote=False)
 
 
 def canonical_url(url: str) -> str:
@@ -157,7 +128,7 @@ def item_id(url: str) -> str:
 
 def get_date_range() -> tuple[str, str]:
     now = datetime.now(timezone.utc)
-    return (now - timedelta(hours=48)).strftime("%B %d, %Y"), now.strftime("%B %d, %Y")
+    return (now - timedelta(hours=72)).strftime("%B %d, %Y"), now.strftime("%B %d, %Y")
 
 
 def extract_published_date(entry: dict) -> datetime | None:
@@ -186,9 +157,8 @@ def extract_event_dates(text: str) -> list[str]:
     found = []
     snippet = text[:1500]
     for pattern in DATE_PATTERNS:
-        matches = re.findall(pattern, snippet, re.IGNORECASE)
-        for m in matches:
-            date_str = m if isinstance(m, str) else " ".join(m)
+        for m in re.finditer(pattern, snippet, re.IGNORECASE):
+            date_str = m.group(0)
             if date_str not in found:
                 found.append(date_str)
     return found[:3]  # максимум 3 даты
@@ -347,57 +317,6 @@ async def fetch_rss_items(seen: set) -> list[dict]:
     return items
 
 
-# ─── Научный канал ───────────────────────────────────────────────────────────
-
-async def fetch_science_articles(seen: set) -> list[dict]:
-    articles = []
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
-    async with httpx.AsyncClient(timeout=30) as client:
-        for term in SCIENCE_TERMS:
-            try:
-                resp = await client.get(
-                    "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
-                    params={
-                        "query": f"{term} AND FIRST_PDATE:[{cutoff} TO *]",
-                        "format": "json",
-                        "pageSize": 5,
-                        "sort": "date desc",
-                        "resultType": "core",
-                    }
-                )
-                data = resp.json()
-                for r in data.get("resultList", {}).get("result", []):
-                    url = f"https://europepmc.org/article/{r.get('source','')}/{r.get('id','')}"
-                    uid = item_id(url)
-                    if uid in seen:
-                        continue
-                    journal = r.get("journalTitle", "")
-                    pub_date_str = r.get("firstPublicationDate", "")
-                    pub_date = None
-                    if pub_date_str:
-                        try:
-                            pub_date = datetime.strptime(pub_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                        except Exception:
-                            pass
-                    articles.append({
-                        "title": r.get("title", ""),
-                        "url": url,
-                        "uid": uid,
-                        "summary": (r.get("abstractText", "") or r.get("title", ""))[:500],
-                        "source": journal or "Europe PMC",
-                        "pub_date": pub_date,
-                        "event_dates": [],
-                        "content_type": "ИССЛЕДОВАНИЕ",
-                        "is_science": True,
-                        "importance_boost": 1 if journal in HIGH_WEIGHT_JOURNALS else 0,
-                    })
-                await asyncio.sleep(0.3)
-            except Exception as e:
-                logger.warning(f"Europe PMC error for {term}: {e}")
-    logger.info(f"Science articles: {len(articles)}")
-    return articles
-
-
 # ─── Claude ──────────────────────────────────────────────────────────────────
 
 async def call_claude_with_retry(payload: dict, timeout: int = 300, retries: int = 2) -> dict:
@@ -424,37 +343,42 @@ async def call_claude_with_retry(payload: dict, timeout: int = 300, retries: int
     return {}
 
 
-async def claude_process(rss_items: list[dict], science_items: list[dict], seen: set) -> list[dict]:
-    rss_text = "\n".join(f"- [{i['source']}] {i['title']} | {i['url']}" for i in rss_items[:60])
-    science_text = "\n".join(f"- [{i['source']}] {i['title']} | {i['url']}" for i in science_items[:40])
+async def claude_process(rss_items: list[dict], seen: set) -> list[dict]:
+    rss_text = "\n".join(f"- [{i['source']}] {i['title']} | {i['url']}" for i in rss_items[:80])
     search_text = "\n".join(f"- {q}" for q in SEARCH_QUERIES)
     date_from, date_to = get_date_range()
 
-    prompt = f"""Ты редактор Telegram-канала «Независимый Портал» — русскоязычного новостного портала обо всём что связано с веществами.
+    prompt = f"""Ты редактор Telegram-канала «Независимый Портал». Теперь это русскоязычная лента про жизнь в Бразилии: для людей, которые здесь живут, собираются переехать или просто следят за страной. Канал развлекательный, не деловой. Редактор живёт во Флорианополисе (Санта-Катарина) и сам выбирает из подборки, что пойдёт в ролики.
 
-ВАЖНО: Сегодня {date_to}. Для новостей - только после {date_from}. Для науки - последние 30 дней.
+ВАЖНО: сегодня {date_to}. Бери только материалы, опубликованные после {date_from}. Всё, что старше, пропускай.
 
-Тематика: психоделики, каннабис, наркополитика, кокаин/опиоиды/метамфетамин, картели, снижение вреда, нейронаука, лечение зависимости, фармацевтика, этноботаника, резонансные истории.
+Что искать, по убыванию ценности:
+1. Странное и вирусное: курьёзы, необычные находки, истории, которые хочется переслать.
+2. Санта-Катарина и Флорианополис: события, погода, сезон, стройки, транспорт, пляжи, то, что чувствуется на острове.
+3. Жизнь и быт: цены, курс реала, новые правила для иностранцев, визы, налоги, но коротко и по делу, без экономического занудства.
+4. Культура, еда, футбол, карнавал, музыка.
+5. Природа и животные: Амазония, фауна, находки.
+6. Криминал и резонансные дела общенационального масштаба.
+7. Психоделики, каннабис, аяуаска в Бразилии: одна рубрика, не больше 1-2 заметок за выпуск.
 
-Веб-поиск строго за последние 48 часов:
+Источники на португальском переводи на русский. Названия мест и людей пиши так, как их пишут по-русски, спорные имена оставляй в оригинале в скобках. Не склеивай разные события под одним заголовком. Даты привязывай к событию: «принят», «подписан», «вступает в силу», если в источнике их несколько, укажи все.
+
+Веб-поиск по этим запросам:
 {search_text}
 
-Новости из RSS (уже отфильтрованы по возрасту):
+Материалы из RSS (уже отфильтрованы по возрасту):
 {rss_text}
 
-Научные статьи из Europe PMC (30 дней):
-{science_text}
-
-Напиши 10-15 заметок. Включи 2-3 научные статьи.
+Напиши 12-18 заметок. Не повторяй одну и ту же историю из разных источников: бери самый надёжный. Выводов, оценок и авторской позиции в конце заметок не пиши, только факты.
 
 Формат СТРОГО (без звёздочек, без markdown):
 ЗАГОЛОВОК: [короткий, конкретный, двухчастный через точку]
 ТЕКСТ: [строго 2-3 предложения, максимум 300 символов, только факты]
 THREADS: [1-2 предложения с эмодзи в начале, максимум 200 символов, суть + ссылка в конце]
 ДАТА: [ДД.ММ.ГГГГ — дата публикации материала]
-КАТЕГОРИЯ: [исследование / политика / психоделики / регион / резонанс / криминал / каннабис / опиоиды / нейронаука / фармакология / зависимость / этноботаника]
-ВАЖНОСТЬ: [1-5]
-РЕГИОН: [США / Европа / Латинская Америка / Азия / Россия / Ближний Восток / Африка / Глобально]
+КАТЕГОРИЯ: [странное / санта-катарина / быт / закон / культура / еда / спорт / природа / криминал / резонанс / психоделики / каннабис]
+ВАЖНОСТЬ: [1-5, где 5 - то, что точно стоит ролика]
+РЕГИОН: [Санта-Катарина / Юг Бразилии / Сан-Паулу / Рио / Амазония / Вся Бразилия / Мир]
 ИСТОЧНИК: [название]
 ССЫЛКА: [URL]
 ---"""
@@ -537,23 +461,23 @@ def format_post(post: dict, rss_meta: dict | None = None) -> str:
         importance = "⭐⭐⭐"
 
     content_type = post.get("content_type", "НОВОСТЬ")
-    type_label = "📰 НОВОСТЬ" if content_type == "НОВОСТЬ" else "✍️ КОЛОНКА"
+    type_label = "🗞 НОВОСТЬ" if content_type == "НОВОСТЬ" else "✍️ КОЛОНКА"
 
     meta = []
     if post.get("region"):
-        meta.append(f"🌐 {post['region']}")
+        meta.append(f"🌐 {clean_text(post['region'])}")
     meta.append(importance)
 
     text = f"{icon} <b>{clean_text(post['title'])}</b>\n\n"
     text += f"{clean_text(post['text'])}\n\n"
 
     # Дата публикации
-    pub_date_str = post.get("date", "дата не определена")
+    pub_date_str = clean_text(post.get("date", "дата не определена"))
     text += f"📅 Публикация: {pub_date_str}\n"
 
     # Дата события из RSS метаданных
     if rss_meta and rss_meta.get("event_dates"):
-        text += f"📌 Событие: {', '.join(rss_meta['event_dates'])}\n"
+        text += f"📌 Событие: {clean_text(', '.join(rss_meta['event_dates']))}\n"
     else:
         text += f"📌 Событие: не извлечена\n"
 
@@ -561,9 +485,10 @@ def format_post(post: dict, rss_meta: dict | None = None) -> str:
     text += " · ".join(meta) + "\n"
 
     if post.get("source"):
-        text += f"📰 {post['source']}"
+        text += f"📰 {clean_text(post['source'])}"
     if post.get("url"):
-        text += f" — <a href='{post['url']}'>читать</a>"
+        safe_url = html.escape(post["url"], quote=True)
+        text += f' — <a href="{safe_url}">читать</a>'
 
     return text[:4000]
 
@@ -576,17 +501,14 @@ async def run_digest():
 
     seen = await load_seen(bot)
 
-    rss_items, science_items = await asyncio.gather(
-        fetch_rss_items(seen),
-        fetch_science_articles(seen)
-    )
-    logger.info(f"RSS: {len(rss_items)}, Science: {len(science_items)}")
+    rss_items = await fetch_rss_items(seen)
+    logger.info(f"RSS: {len(rss_items)}")
 
     # Индекс RSS метаданных по URL для обогащения карточек
     rss_index = {item["url"]: item for item in rss_items}
 
     try:
-        posts = await claude_process(rss_items, science_items, seen)
+        posts = await claude_process(rss_items, seen)
     except httpx.ReadTimeout:
         logger.error("Claude timed out")
         await bot.send_message(
@@ -608,7 +530,6 @@ async def run_digest():
         text=(
             f"📋 <b>Дайджест {datetime.now(timezone.utc).strftime('%d.%m.%Y')}</b>\n"
             f"RSS: {len(rss_items)} новостей\n"
-            f"Наука: {len(science_items)} статей\n"
             f"Заметок: {len(posts)}\n\n"
             f"Перешли нужные в канал вручную."
         ),
@@ -638,7 +559,7 @@ async def run_digest():
             try:
                 await bot.send_message(
                     chat_id=ADMIN_CHAT_ID,
-                    text=clean_text(post["threads"])[:500],
+                    text=post["threads"].replace("—", "-").replace("–", "-")[:500],
                     disable_web_page_preview=True,
                 )
             except Exception as e:
