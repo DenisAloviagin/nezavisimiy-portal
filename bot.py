@@ -249,10 +249,9 @@ async def send_html(bot: Bot, text: str, preview: bool = False):
         return await bot.send_message(chat_id=ADMIN_CHAT_ID, text=plain[:4000])
 
 
-def threads_message(text: str, label: str = "✍️ Threads") -> str:
-    n = len(text)
-    warn = " ⚠️ длиннее 500" if n > 500 else ""
-    return f"{label} (≈{n}/500){warn}\n<pre>{esc(text)}</pre>"
+async def send_threads(bot: Bot, text: str):
+    """Пост уходит отдельным сообщением и только текстом: копируешь целиком, ничего не удаляешь."""
+    return await bot.send_message(chat_id=ADMIN_CHAT_ID, text=text[:4000])
 
 
 # ─── Память: что уже отправляли (ветка state в GitHub) ────────────────────────
@@ -476,49 +475,30 @@ def _r1(v) -> str:
 
 
 def weather_card(W: dict, today) -> str:
+    """Короткая карточка для себя: заголовок, одна строка фактов, пляж."""
     desc, emoji = WMO.get(W["code"], ("", "🌤"))
     tmax, tmin = round(W["tmax"]), round(W["tmin"])
     prob = W["rain_prob"]
-    lines = [f"🌤 <b>Погода, {esc(CITY_NAME)}</b>", esc(ru_date(today)), ""]
-    head = f"{emoji} {desc.capitalize()}. " if desc else ""
-    lines.append(f"{head}Днём до {tmax}°, ночью {tmin}°.")
 
-    parts = []
-    if W["t_morning"] is not None:
-        parts.append(f"утром {W['t_morning']}°")
-    parts.append(f"днём до {W['t_day']}°")
-    if W["t_evening"] is not None:
-        parts.append(f"вечером {W['t_evening']}°")
-    lines.append(", ".join(parts).capitalize())
-
+    facts = [f"днём до {tmax}°, ночью {tmin}°"]
     if prob is not None and prob >= 20:
-        rain = f"🌧 Дождь: вероятность до {round(prob)}%"
-        if W["rain_mm"]:
-            rain += f", около {_r1(W['rain_mm'])} мм"
+        rain = f"дождь {round(prob)}%"
         if W.get("rain_all_day"):
-            rain += ", почти весь день"
+            rain += " почти весь день"
         elif W["rain_window"]:
-            rain += f", главное окно {W['rain_window'][0]:02d}:00-{W['rain_window'][1]:02d}:00"
-        lines.append(rain)
-    elif prob is not None:
-        lines.append(f"🌧 Дождя почти нет (вероятность до {round(prob)}%)")
+            rain += f" с {W['rain_window'][0]:02d}:00 до {W['rain_window'][1]:02d}:00"
+        facts.append(rain)
+    else:
+        facts.append("без дождя")
+    if W["gust"] is not None and W["gust"] >= 35:
+        facts.append(f"порывы до {round(W['gust'])} км/ч")
+    if W["uv"] is not None and W["uv"] >= 8:
+        facts.append(f"УФ {round(W['uv'])}")
 
-    if W["wind"] is not None:
-        wind = f"💨 Ветер до {round(W['wind'])} км/ч"
-        if W["gust"] is not None:
-            wind += f", порывы до {round(W['gust'])}"
-        lines.append(wind)
-    if W["uv"] is not None:
-        lines.append(f"🧴 УФ-индекс до {round(W['uv'])}")
-    if W["sunrise"] and W["sunset"]:
-        lines.append(f"🌅 Рассвет {W['sunrise']}, закат {W['sunset']}")
-    if W["sea"] is not None:
-        sea = f"🌊 Море: {round(W['sea'])}°"
-        if W["wave"] is not None:
-            sea += f", волны до {_r1(W['wave'])} м"
-        lines.append(sea)
-    lines.append(f"🏖 {beach_verdict(W)}")
-    return "\n".join(lines)
+    line = ", ".join(facts)
+    return (f"{emoji} <b>{esc(CITY_NAME)}, {esc(ru_date(today).lower())}</b>\n"
+            f"{esc(line[0].upper() + line[1:])}\n"
+            f"🏖 {beach_verdict(W)}")
 
 
 def weather_threads(W: dict, today) -> str:
@@ -569,30 +549,6 @@ def weather_threads(W: dict, today) -> str:
         "cold": [f"🧥 {s} сегодня прохладная: от {tmin}° до {tmax}°.",
                  f"🧥 Сегодня на острове от {tmin}° до {tmax}°, {desc}."],
     }
-    questions = {
-        "storm": ["Кто уже проверил, есть ли свет и заряжены ли телефоны?",
-                  "Как у вас с электричеством в такие дни, держится?",
-                  "Что делаете, когда на острове гремит?"],
-        "rain": ["Что делаете, когда на острове льёт: кофейня, кино или сериал дома?",
-                 "Кто всё равно пойдёт на пляж?",
-                 "Чем занимаетесь в такой дождь?"],
-        "wind": ["Кто сегодня всё равно идёт на пляж?",
-                 "Какой пляж на острове в ветер самый закрытый?",
-                 "Кайтеры, вам сегодня повезло?"],
-        "hot": ["Как переживаете жару: море, кондиционер или душ каждый час?",
-                "Какой пляж выбираете в такую жару?",
-                "Кто уже в воде?"],
-        "beach": ["На какой пляж сегодня?",
-                  "Север острова или юг, куда сегодня едете?",
-                  "Кто уже определился с пляжем?"],
-        "mild": ["Чем занимаетесь в такую погоду?",
-                 "Какой маршрут на сегодня: набережная, тропа или кофейня?",
-                 "Куда сегодня выберетесь?"],
-        "cold": ["Кто достал куртку, а кто всё равно в шлёпанцах?",
-                 "Как греетесь в такие дни, если в доме нет отопления?",
-                 "Что делаете, когда на острове холодно?"],
-    }
-
     body = []
     temp_parts = []
     if W["t_morning"] is not None:
@@ -600,22 +556,22 @@ def weather_threads(W: dict, today) -> str:
     temp_parts.append(f"днём {W['t_day']}°" if temp_parts else f"Днём {W['t_day']}°")
     if W["t_evening"] is not None:
         temp_parts.append(f"вечером {W['t_evening']}°")
-    body.append(", ".join(temp_parts) + ".")
+    body.append("🌡 " + ", ".join(temp_parts) + ".")
 
     extra = []
     if W["sea"] is not None:
-        sea = f"Вода {round(W['sea'])}°"
+        sea = f"🌊 Вода {round(W['sea'])}°"
         if W["wave"] is not None:
             sea += f", волны до {_r1(W['wave'])} м"
         extra.append(sea + ".")
     if kind != "wind" and gust >= 40:
-        extra.append(f"Порывы до {gust} км/ч.")
+        extra.append(f"💨 Порывы до {gust} км/ч.")
     if W["uv"] is not None and W["uv"] >= 8:
-        extra.append(f"УФ-индекс {round(W['uv'])}, крем нужен.")
-    if extra:
-        body.append(" ".join(extra))
+        extra.append(f"🧴 УФ-индекс {round(W['uv'])}, крем нужен.")
+    body.extend(extra)
 
-    return dash(pick(hooks[kind]) + "\n\n" + "\n".join(body) + "\n\n" + pick(questions[kind]))
+    # Вопроса в погодном посте нет: сводка самодостаточна
+    return dash(pick(hooks[kind]) + "\n\n" + "\n".join(body))
 
 
 async def send_weather(bot: Bot, http: httpx.AsyncClient):
@@ -627,7 +583,7 @@ async def send_weather(bot: Bot, http: httpx.AsyncClient):
         except Exception:
             today = now_utc().astimezone(timezone(timedelta(hours=-3))).date()
         await send_html(bot, weather_card(W, today))
-        await send_html(bot, threads_message(weather_threads(W, today), "✍️ Threads: погода"))
+        await send_threads(bot, weather_threads(W, today))
     except Exception as e:
         logger.exception("Weather failed")
         try:
@@ -809,17 +765,58 @@ THREADS: [готовый пост по правилам ниже, может з�
 ССЫЛКА: [URL]
 ---
 
-Как писать THREADS (от 350 до 480 символов вместе с переносами строк):
+Как писать THREADS (жёсткий максимум 450 символов вместе с эмодзи и переносами строк, лучше 300-420; пост длиннее 500 Threads разрежет на два, это брак):
 Строка 1: зацепка. Конкретная деталь, цифра или неожиданный факт из самой новости. Не вопрос-кликбейт, не «вы не поверите», не пересказ заголовка. Это единственное, что видно до кнопки «ещё».
 Пустая строка.
-Дальше 2-3 коротких предложения: что произошло, где, когда, одна конкретная деталь. Читатель не знает контекста и не откроет ссылку, поэтому всё нужное должно быть в тексте. Ссылки в посте нет, поэтому назови источник одним словом: «пишет G1», «по данным NSC».
+Дальше 2-3 коротких предложения: что произошло, где, когда, одна конкретная деталь. Читатель не знает контекста и не откроет ссылку, поэтому всё нужное должно быть в тексте. Ссылки в посте нет, поэтому назови источник одним словом: «пишет G1», «по данным NSC». Второстепенные детали выкидывай: лучше короче, чем длиннее лимита.
 Если применимо, одна строка о том, кого это касается и с какой даты.
-Пустая строка.
-Последняя строка: вопрос, на который человек ответит из своего опыта (про его пляж, его район, его случай). Не «что думаете?» и не «согласны?».
+
+Вопрос в конце не обязателен. Ставь его только если новость сама подталкивает ответить из своего опыта: история, странность, культура, еда, спорт, спорное решение, бытовая ситуация, где у читателя есть свой случай. Для служебных новостей (перекрытия дорог и мостов, расписания, предупреждения, цены, правила, отключения света и воды) вопрос не нужен: заканчивай последним фактом или практической строкой «что делать». Примерно в половине постов вопроса быть не должно. Если сомневаешься, не ставь. Вопросы-заглушки запрещены: «а вы как?», «что думаете?», «согласны?», «вы обычно через какой мост ездите?».
 
 Голос: прямой, тёплый, чуть ироничный. Короткие фразы, конкретные детали вместо абстракций. К читателю на «вы» или безлично. Не пиши «я» и не придумывай личный опыт автора. Числа всегда с контекстом: сколько из скольких, за какой период. Если факт подтверждает один источник, так и скажи. Никаких выводов и оценок от себя, никаких драматичных противопоставлений.
 Запрещено: тире длиннее дефиса, конструкции «не X, а Y», «вот о чём», «и тут самое интересное», «стало известно», «сообщается», хэштеги, ссылки.
-Эмодзи: пост должен быть яркий. Ставь 4-6 эмодзи: один в начале первой строки, по одному в начале строки с фактами, в строке «кого касается» и перед вопросом. Выбирай эмодзи по смыслу новости (🌊 море, 🚗 дорога, 🍤 еда, ⚠️ предупреждение, 📍 место, 👀 вопрос), не повторяй один и тот же дважды. Эмодзи считаются в лимит символов, так что укладывайся в 480 с ними."""
+Эмодзи: пост должен быть яркий. Ставь 4-6 эмодзи: один в начале первой строки, по одному в начале каждого следующего абзаца (и перед вопросом, если он есть). Выбирай эмодзи по смыслу новости (🌊 море, 🚗 дорога, 🍤 еда, ⚠️ предупреждение, 📍 место, 👀 вопрос), не повторяй один и тот же дважды. Эмодзи считаются в лимит символов."""
+
+
+THREADS_MAX = 480      # выше этого просим сократить
+THREADS_TARGET = 430   # до скольки просим сократить
+
+
+def trim_paragraphs(text: str, limit: int) -> str:
+    """Последний рубеж: отбрасываем абзацы с конца, но первый (зацепку) оставляем."""
+    paras = text.split("\n\n")
+    while len("\n\n".join(paras)) > limit and len(paras) > 1:
+        paras.pop()
+    return "\n\n".join(paras)
+
+
+async def fit_threads(text: str) -> str:
+    """Пост длиннее лимита сокращаем отдельным коротким запросом, без поиска."""
+    for _ in range(2):
+        if len(text) <= THREADS_MAX:
+            return text
+        try:
+            data = await call_claude_with_retry({
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 600,
+                "messages": [{"role": "user", "content": (
+                    f"Сократи пост для Threads до {THREADS_TARGET} символов максимум "
+                    f"(сейчас {len(text)}). Оставь зацепку в первой строке, ключевые факты "
+                    "(даты, места, цифры, источник) и эмодзи в начале абзацев. Выкинь второстепенное. "
+                    "Ничего не добавляй: ни ссылок, ни хэштегов, ни длинных тире, ни новых вопросов. "
+                    "Если в конце есть вопрос-заглушка, убери его. Верни только текст поста, без пояснений.\n\n"
+                    + text)}],
+            }, timeout=60)
+            new = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+            new = clean_threads(new)
+            if new:
+                text = new
+        except Exception:
+            logger.exception("Shorten failed")
+            break
+    if len(text) > THREADS_MAX:
+        text = trim_paragraphs(text, THREADS_MAX)
+    return text
 
 
 async def claude_process(rss_items, seen_ids: set, titles: list[str], window_hours: int):
@@ -869,6 +866,9 @@ async def claude_process(rss_items, seen_ids: set, titles: list[str], window_hou
             except ValueError:
                 pass
 
+        if post.get("threads"):
+            post["threads"] = await fit_threads(post["threads"])
+
         post["uid"] = uid
         post["date_label"] = label
         post["content_type"] = detect_content_type(post["url"], [])
@@ -904,6 +904,9 @@ def format_card(post: dict, rss_meta: dict | None = None) -> str:
         line += f" · {esc(post['source'])}"
     if post.get("url"):
         line += f' · <a href="{html.escape(post["url"], quote=True)}">читать</a>'
+    if post.get("threads"):
+        n = len(post["threads"])
+        line += f"\n✍️ Пост для Threads ниже · {n}/500" + (" ⚠️ длиннее 500" if n > 500 else "")
     return (text + line)[:4000]
 
 
@@ -992,7 +995,7 @@ async def run_digest():
                         try:
                             await send_html(bot, format_card(post, rss_index.get(post["url"])), preview=True)
                             if post.get("threads"):
-                                await send_html(bot, threads_message(post["threads"]))
+                                await send_threads(bot, post["threads"])
                         except Exception:
                             logger.exception("Send failed")
                             continue
