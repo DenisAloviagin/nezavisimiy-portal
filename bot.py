@@ -8,7 +8,7 @@
 
 Переменные окружения:
   BOT_TOKEN, ADMIN_CHAT_ID, ANTHROPIC_API_KEY   обязательные
-  GITHUB_TOKEN                                  память о том, что уже отправлено
+  GITHUB_TOKEN                                  необязательная: память в GitHub вместо Telegram
   GITHUB_REPO                                   необязательная, по умолчанию DenisAloviagin/nezavisimiy-portal
 """
 import os
@@ -24,7 +24,7 @@ from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
 import feedparser
 import httpx
-from telegram import Bot
+from telegram import Bot, InputMediaDocument
 
 try:
     from telegram import LinkPreviewOptions
@@ -252,6 +252,48 @@ async def send_html(bot: Bot, text: str, preview: bool = False):
 async def send_threads(bot: Bot, text: str):
     """Пост уходит отдельным сообщением и только текстом: копируешь целиком, ничего не удаляешь."""
     return await bot.send_message(chat_id=ADMIN_CHAT_ID, text=text[:4000])
+
+
+# ─── Память в самом Telegram (без токенов) ───────────────────────────────────
+# Бот держит файл seen.json закреплённым сообщением в чате с тобой.
+# Каждое утро читает его и заменяет новой версией на месте.
+
+TG_STATE_FILE = "seen.json"
+TG_STATE_CAPTION = "🧠 Память бота: что уже присылал. Не удаляй и не открепляй."
+
+
+async def tg_load_state(bot: Bot) -> tuple[list, int | None]:
+    chat = await bot.get_chat(ADMIN_CHAT_ID)
+    pm = getattr(chat, "pinned_message", None)
+    doc = getattr(pm, "document", None) if pm else None
+    if not doc or doc.file_name != TG_STATE_FILE:
+        return [], None
+    tg_file = await bot.get_file(doc.file_id)
+    raw = bytes(await tg_file.download_as_bytearray())
+    return json.loads(raw).get("items", []), pm.message_id
+
+
+async def tg_save_state(bot: Bot, items: list, msg_id: int | None):
+    payload = json.dumps({"items": items}, ensure_ascii=False).encode("utf-8")
+    if msg_id:
+        try:
+            await bot.edit_message_media(
+                chat_id=ADMIN_CHAT_ID, message_id=msg_id,
+                media=InputMediaDocument(media=payload, filename=TG_STATE_FILE, caption=TG_STATE_CAPTION),
+            )
+            return
+        except Exception:
+            logger.exception("State edit failed, sending a new one")
+    msg = await bot.send_document(
+        chat_id=ADMIN_CHAT_ID, document=payload, filename=TG_STATE_FILE,
+        caption=TG_STATE_CAPTION, disable_notification=True,
+    )
+    await bot.pin_chat_message(chat_id=ADMIN_CHAT_ID, message_id=msg.message_id, disable_notification=True)
+    if msg_id:
+        try:
+            await bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=msg_id)
+        except Exception:
+            pass
 
 
 # ─── Память: что уже отправляли (ветка state в GitHub) ────────────────────────
@@ -930,7 +972,12 @@ async def run_digest():
                 logger.exception("State load failed")
                 state_note = f"не удалось прочитать память ({state_hint(e)})"
         else:
-            state_note = "не задана переменная GITHUB_TOKEN"
+            try:
+                items, sha = await tg_load_state(bot)
+                state_ok = True
+            except Exception as e:
+                logger.exception("Telegram state load failed")
+                state_note = f"не удалось прочитать память в Telegram ({human_error(e)})"
         now = now_utc()
         items = prune_items(items, now)
         seen_ids = {it["id"] for it in items}
@@ -1007,16 +1054,20 @@ async def run_digest():
                         await asyncio.sleep(1)
         finally:
             # 4. Сохраняем память, даже если что-то упало по дороге
-            if GITHUB_TOKEN and state_ok:
+            if state_ok:
                 try:
-                    await gh_save_state(http, prune_items(items, now_utc()), sha)
+                    if GITHUB_TOKEN:
+                        await gh_save_state(http, prune_items(items, now_utc()), sha)
+                    else:
+                        await tg_save_state(bot, prune_items(items, now_utc()), sha)
                     logger.info(f"Память сохранена, записей: {len(items)}")
                 except Exception as e:
                     logger.exception("State save failed")
+                    why = state_hint(e) if GITHUB_TOKEN else human_error(e)
                     try:
                         await bot.send_message(
                             chat_id=ADMIN_CHAT_ID,
-                            text=f"⚠️ Память не сохранилась ({state_hint(e)}). Завтра возможны повторы.")
+                            text=f"⚠️ Память не сохранилась ({why}). Завтра возможны повторы.")
                     except Exception:
                         pass
     logger.info(f"Готово, отправлено заметок: {sent}")
